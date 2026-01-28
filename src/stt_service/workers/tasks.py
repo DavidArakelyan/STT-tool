@@ -72,6 +72,7 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
 
             # Update status to processing
             await job_repo.update_status(job_id, JobStatus.PROCESSING)
+            await session.commit()  # Commit to show "processing" status in UI
 
             # Debug: log job attributes
             logger.info(
@@ -132,6 +133,7 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                     ]
                     await chunk_repo.create_many(job_id, chunks_data)
                     await job_repo.update_chunk_counts(job_id, total_chunks=len(chunks))
+                    await session.commit()  # Commit to make chunks visible in UI
 
                 # Process chunks
                 provider = get_provider(provider_name)
@@ -148,6 +150,7 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                     # Mark as processing
                     if chunk_record:
                         await chunk_repo.mark_processing(chunk_record.id)
+                        await session.commit()  # Commit to show "processing" status
 
                     # Transcribe chunk
                     try:
@@ -162,6 +165,7 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                         if chunk_record:
                             await chunk_repo.set_result(chunk_record.id, result)
                             await job_repo.increment_completed_chunks(job_id)
+                            await session.commit()  # Commit progress after each chunk
 
                         results.append(result)
 
@@ -178,6 +182,7 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                                 ChunkStatus.FAILED,
                                 error=str(e),
                             )
+                            await session.commit()  # Commit error status
                         raise
 
                 # Merge results

@@ -205,9 +205,20 @@ function renderJobCard(job) {
     const showResult = job.status === 'completed';
     const showDownloadPartial = job.completed_chunks > 0 && job.status === 'failed';
     const isFinished = ['completed', 'failed', 'cancelled'].includes(job.status);
+    const isActive = ['pending', 'uploaded', 'processing'].includes(job.status);
+
+    // Calculate elapsed time for active jobs
+    const createdAt = new Date(job.created_at);
+    const now = new Date();
+    const elapsedMs = now - createdAt;
+    const elapsedMinutes = Math.floor(elapsedMs / 60000);
+    const elapsedSeconds = Math.floor((elapsedMs % 60000) / 1000);
+    const elapsedStr = elapsedMinutes > 0
+        ? `${elapsedMinutes}m ${elapsedSeconds}s`
+        : `${elapsedSeconds}s`;
 
     return `
-        <div class="job-card" id="job-${job.job_id}">
+        <div class="job-card ${isActive ? 'job-active' : ''}" id="job-${job.job_id}">
             <div class="job-header">
                 <div class="job-info">
                     <h3>${job.original_filename || 'Unknown file'}</h3>
@@ -219,16 +230,26 @@ function renderJobCard(job) {
                     </div>
                 </div>
                 <div class="job-status">
+                    ${isActive ? `<span class="status-spinner"></span>` : ''}
                     <span class="status-badge status-${job.status}">
                         ${statusIcon} ${job.status}
                     </span>
                 </div>
             </div>
 
+            ${isActive ? `
+                <div class="status-detail">
+                    <span class="elapsed-time">⏱️ Elapsed: ${elapsedStr}</span>
+                    ${job.status === 'processing' ? `<span class="processing-info">Processing with ${job.provider || 'provider'}...</span>` : ''}
+                    ${job.status === 'pending' ? `<span class="processing-info">Waiting in queue...</span>` : ''}
+                    ${job.status === 'uploaded' ? `<span class="processing-info">Preparing audio chunks...</span>` : ''}
+                </div>
+            ` : ''}
+
             ${showProgress ? `
                 <div class="progress-container">
                     <div class="progress-bar">
-                        <div class="progress-fill" style="width: ${progress}%"></div>
+                        <div class="progress-fill ${job.status === 'processing' ? 'progress-animated' : ''}" style="width: ${progress}%"></div>
                     </div>
                     <div class="progress-text">
                         <span>${job.completed_chunks} / ${job.total_chunks} chunks</span>
@@ -246,6 +267,7 @@ function renderJobCard(job) {
             <div class="chunks-section" id="chunks-${job.job_id}"></div>
 
             <div class="job-actions">
+                <button class="btn btn-secondary" onclick="viewLogs('${job.job_id}')">📋 Logs</button>
                 ${showProgress ? `<button class="btn btn-secondary" onclick="toggleChunks('${job.job_id}')">📊 Show Chunks</button>` : ''}
                 ${showResult ? `<button class="btn btn-success" onclick="viewResult('${job.job_id}')">📄 View Result</button>` : ''}
                 ${showResult ? `<button class="btn btn-secondary" onclick="downloadResult('${job.job_id}')">⬇️ Download</button>` : ''}
@@ -472,7 +494,14 @@ async function downloadResult(jobId) {
 
         const result = await response.json();
         const text = result.transcript.full_text;
-        const filename = `transcript_${jobId.slice(0, 8)}.txt`;
+
+        // Use original filename if available, otherwise fallback to ID
+        let filename = `transcript_${jobId.slice(0, 8)}.txt`;
+        if (result.original_filename) {
+            const baseName = result.original_filename.split('.').slice(0, -1).join('.') || result.original_filename;
+            filename = `${baseName}_transcript.txt`;
+        }
+
         downloadTextFile(text, filename);
         showToast('Transcript downloaded', 'success');
     } catch (error) {
@@ -589,6 +618,114 @@ function downloadTextFile(content, filename) {
         }, 100);
     }, 0);
 }
+
+// ===== Logs Modal =====
+let currentLogsJobId = null;
+
+async function viewLogs(jobId) {
+    currentLogsJobId = jobId;
+    const modal = document.getElementById('logsModal');
+    const metaContainer = document.getElementById('logsMeta');
+    const logsContainer = document.getElementById('logsContainer');
+
+    // Show loading state
+    logsContainer.innerHTML = '<div class="logs-loading">Loading logs...</div>';
+    modal.classList.add('open');
+
+    try {
+        const response = await fetch(`${API_BASE}/jobs/${jobId}/logs`, {
+            headers: { 'X-API-Key': getApiKey() }
+        });
+
+        if (!response.ok) {
+            throw new Error('Failed to fetch logs');
+        }
+
+        const data = await response.json();
+        renderLogs(data);
+    } catch (error) {
+        logsContainer.innerHTML = `<div class="logs-error">❌ ${error.message}</div>`;
+    }
+}
+
+function renderLogs(data) {
+    const metaContainer = document.getElementById('logsMeta');
+    const logsContainer = document.getElementById('logsContainer');
+
+    // Render meta info
+    const statusIcon = {
+        pending: '⏳',
+        uploaded: '📤',
+        processing: '⚙️',
+        completed: '✅',
+        failed: '❌',
+        cancelled: '🚫'
+    }[data.status] || '❓';
+
+    metaContainer.innerHTML = `
+        <div class="logs-meta-grid">
+            <div class="logs-meta-item">
+                <span class="label">Status</span>
+                <span class="status-badge status-${data.status}">${statusIcon} ${data.status}</span>
+            </div>
+            <div class="logs-meta-item">
+                <span class="label">Provider</span>
+                <span>${data.provider || 'Unknown'}</span>
+            </div>
+            <div class="logs-meta-item">
+                <span class="label">Progress</span>
+                <span>${data.completed_chunks} / ${data.total_chunks} chunks</span>
+            </div>
+            <div class="logs-meta-item">
+                <span class="label">Created</span>
+                <span>${new Date(data.created_at).toLocaleString()}</span>
+            </div>
+        </div>
+    `;
+
+    // Render log entries
+    if (data.logs.length === 0) {
+        logsContainer.innerHTML = '<p class="logs-empty">No log entries yet.</p>';
+        return;
+    }
+
+    logsContainer.innerHTML = data.logs.map(log => {
+        const levelIcon = {
+            info: 'ℹ️',
+            success: '✅',
+            error: '❌',
+            warning: '⚠️'
+        }[log.level] || 'ℹ️';
+
+        const time = new Date(log.timestamp).toLocaleTimeString();
+
+        return `
+            <div class="log-entry log-${log.level}">
+                <span class="log-time">${time}</span>
+                <span class="log-icon">${levelIcon}</span>
+                <span class="log-message">${log.message}</span>
+            </div>
+        `;
+    }).join('');
+}
+
+function closeLogsModal() {
+    document.getElementById('logsModal').classList.remove('open');
+    currentLogsJobId = null;
+}
+
+function refreshLogs() {
+    if (currentLogsJobId) {
+        viewLogs(currentLogsJobId);
+    }
+}
+
+// Close logs modal on outside click
+document.getElementById('logsModal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'logsModal') {
+        closeLogsModal();
+    }
+});
 
 // ===== Toast Notifications =====
 function showToast(message, type = 'info') {

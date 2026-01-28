@@ -392,6 +392,58 @@ select {
     border: 1px solid var(--border-color);
 }
 
+.job-card.job-active {
+    border-color: var(--processing);
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(59, 130, 246, 0.02));
+}
+
+.status-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid transparent;
+    border-top-color: var(--processing);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+.status-detail {
+    display: flex;
+    gap: 1.5rem;
+    padding: 0.75rem;
+    margin: 0.5rem 0;
+    background: rgba(59, 130, 246, 0.1);
+    border-radius: var(--radius-sm);
+    font-size: 0.85rem;
+}
+
+.elapsed-time {
+    color: var(--processing);
+    font-weight: 500;
+}
+
+.processing-info {
+    color: var(--text-secondary);
+}
+
+.progress-fill.progress-animated {
+    background: linear-gradient(90deg,
+            var(--accent-primary) 0%,
+            var(--accent-secondary) 50%,
+            var(--accent-primary) 100%);
+    background-size: 200% 100%;
+    animation: progressShimmer 2s ease-in-out infinite;
+}
+
+@keyframes progressShimmer {
+    0% {
+        background-position: -100% 0;
+    }
+
+    100% {
+        background-position: 100% 0;
+    }
+}
+
 .job-header {
     display: flex;
     justify-content: space-between;
@@ -650,6 +702,93 @@ select {
     resize: vertical;
     font-size: 0.95rem;
     line-height: 1.8;
+}
+
+/* ===== Logs Modal ===== */
+.logs-meta {
+    margin-bottom: 1rem;
+}
+
+.logs-meta-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 1rem;
+    padding: 1rem;
+    background: var(--bg-input);
+    border-radius: var(--radius-sm);
+}
+
+.logs-meta-item {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.logs-meta-item .label {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.logs-container {
+    background: var(--bg-primary);
+    border-radius: var(--radius-sm);
+    padding: 1rem;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.logs-loading,
+.logs-empty,
+.logs-error {
+    text-align: center;
+    padding: 2rem;
+    color: var(--text-muted);
+}
+
+.logs-error {
+    color: var(--error);
+}
+
+.log-entry {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.75rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.85rem;
+}
+
+.log-entry:last-child {
+    border-bottom: none;
+}
+
+.log-time {
+    color: var(--text-muted);
+    font-family: monospace;
+    font-size: 0.8rem;
+    min-width: 70px;
+}
+
+.log-icon {
+    flex-shrink: 0;
+}
+
+.log-message {
+    flex: 1;
+    color: var(--text-primary);
+    word-break: break-word;
+}
+
+.log-entry.log-error .log-message {
+    color: var(--error);
+}
+
+.log-entry.log-success .log-message {
+    color: var(--success);
+}
+
+.log-entry.log-warning .log-message {
+    color: var(--warning);
 }
 
 /* ===== Delete Modal ===== */

@@ -119,6 +119,26 @@
             </div>
         </div>
 
+        <!-- Logs Modal -->
+        <div class="modal" id="logsModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>📋 Job Logs</h2>
+                    <button class="btn btn-icon" onclick="closeLogsModal()">✕</button>
+                </div>
+                <div class="modal-body">
+                    <div class="logs-meta" id="logsMeta"></div>
+                    <div class="logs-container" id="logsContainer">
+                        <div class="logs-loading">Loading logs...</div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="refreshLogs()">🔄 Refresh</button>
+                    <button class="btn btn-secondary" onclick="closeLogsModal()">Close</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Delete Confirmation Modal -->
         <div class="modal" id="deleteModal">
             <div class="modal-content modal-small">

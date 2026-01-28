@@ -247,6 +247,7 @@ class TranscriptionResult(BaseModel):
 
     # Metadata
     duration_seconds: float
+    original_filename: str | None = None
     language_detected: str | None = None
     provider_used: str
 

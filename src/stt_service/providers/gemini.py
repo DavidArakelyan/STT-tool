@@ -50,6 +50,13 @@ class GeminiProvider(BaseSTTProvider):
             # Build prompt for Gemini
             prompt = self._build_transcription_prompt(config)
 
+            logger.info(
+                "Gemini API request",
+                audio_size=len(audio_data),
+                mime_type=mime_type,
+                model=settings.providers.gemini_model,
+            )
+
             # Create audio part
             audio_part = {
                 "mime_type": mime_type,
@@ -65,21 +72,34 @@ class GeminiProvider(BaseSTTProvider):
                 ),
             )
 
+            logger.info("Gemini API response received", has_text=bool(response.text))
+
             # Parse response
             return self._parse_response(response, config)
 
         except Exception as e:
-            error_msg = str(e).lower()
-            if "quota" in error_msg or "rate" in error_msg or "429" in error_msg:
+            error_msg = str(e)
+            error_type = type(e).__name__
+            
+            # Log the full error details
+            logger.error(
+                "Gemini API error",
+                error_type=error_type,
+                error_message=error_msg,
+                audio_size=len(audio_data),
+            )
+            
+            error_lower = error_msg.lower()
+            if "quota" in error_lower or "rate" in error_lower or "429" in error_lower or "resource_exhausted" in error_lower:
                 raise RateLimitError(
-                    message=f"Gemini rate limit exceeded: {e}",
+                    message=f"Gemini rate limit exceeded: {error_msg}",
                     provider=self.name,
                     retry_after=60,  # Default 60 seconds
                 ) from e
             raise ProviderError(
-                message=f"Gemini transcription failed: {e}",
+                message=f"Gemini transcription failed: {error_msg}",
                 provider=self.name,
-                retryable="temporary" in error_msg or "unavailable" in error_msg,
+                retryable="temporary" in error_lower or "unavailable" in error_lower,
             ) from e
 
     async def transcribe_file(
@@ -169,28 +189,41 @@ Output format (JSON):
     ) -> TranscriptionResponse:
         """Parse Gemini response into TranscriptionResponse."""
         import json
+        import re
 
         try:
             # Extract text from response
             text = response.text
+            if not text:
+                raise ProviderError("Gemini returned empty response")
 
-            # Try to parse as JSON
-            # Find JSON in response (it might be wrapped in markdown code blocks)
-            json_start = text.find("{")
-            json_end = text.rfind("}") + 1
+            # Try to find JSON in response (it might be wrapped in markdown code blocks)
+            # Find the first { and the last }
+            json_match = re.search(r"\{.*\}", text, re.DOTALL)
+            
+            data = None
+            if json_match:
+                try:
+                    json_str = json_match.group(0)
+                    data = json.loads(json_str)
+                except json.JSONDecodeError:
+                    # Try cleaning common issues like trailing commas or markdown escapes
+                    cleaned_json = re.sub(r",\s*([\]\}])", r"\1", json_str)
+                    try:
+                        data = json.loads(cleaned_json)
+                    except json.JSONDecodeError:
+                        logger.warning("Failed to parse Gemini JSON after cleaning", text=text)
 
-            if json_start >= 0 and json_end > json_start:
-                json_str = text[json_start:json_end]
-                data = json.loads(json_str)
-
+            if data and isinstance(data, dict):
+                segments_data = data.get("segments", [])
                 segments = []
-                for seg in data.get("segments", []):
+                for seg in segments_data:
                     segments.append(
                         TranscriptionSegment(
-                            text=seg.get("text", ""),
+                            text=seg.get("text", "").strip(),
                             start_time=float(seg.get("start", 0)),
                             end_time=float(seg.get("end", 0)),
-                            speaker_id=seg.get("speaker"),
+                            speaker_id=seg.get("speaker", "SPEAKER_00"),
                             confidence=seg.get("confidence"),
                         )
                     )
@@ -199,19 +232,25 @@ Output format (JSON):
                 if not full_text and segments:
                     full_text = " ".join(s.text for s in segments)
 
-                return TranscriptionResponse(
-                    text=full_text,
-                    segments=segments,
-                    language_detected=config.language,
-                    metadata={"model": settings.providers.gemini_model},
-                )
+                if full_text or segments:
+                    return TranscriptionResponse(
+                        text=full_text,
+                        segments=segments,
+                        language_detected=config.language,
+                        metadata={"model": settings.providers.gemini_model},
+                    )
 
-            # Fallback: treat entire response as plain text
+            # Fallback: treat entire response as plain text, but clean up markdown blocks
+            clean_text = text.strip()
+            # Remove markdown code blocks like ```json ... ``` or just ``` ... ```
+            clean_text = re.sub(r"```[a-z]*\n?", "", clean_text)
+            clean_text = clean_text.replace("```", "").strip()
+
             return TranscriptionResponse(
-                text=text.strip(),
+                text=clean_text,
                 segments=[
                     TranscriptionSegment(
-                        text=text.strip(),
+                        text=clean_text,
                         start_time=0.0,
                         end_time=0.0,
                         speaker_id="SPEAKER_00",
@@ -221,21 +260,15 @@ Output format (JSON):
                 metadata={"model": settings.providers.gemini_model, "raw_response": True},
             )
 
-        except json.JSONDecodeError:
-            # Return plain text if JSON parsing fails
-            text = response.text.strip()
+        except Exception as e:
+            logger.error("Error parsing Gemini response", error=str(e), text=response.text[:500] if hasattr(response, 'text') else str(response))
+            # Last resort fallback
+            fallback_text = str(response.text) if hasattr(response, 'text') else "Error parsing response"
             return TranscriptionResponse(
-                text=text,
-                segments=[
-                    TranscriptionSegment(
-                        text=text,
-                        start_time=0.0,
-                        end_time=0.0,
-                        speaker_id="SPEAKER_00",
-                    )
-                ],
+                text=fallback_text,
+                segments=[],
                 language_detected=config.language,
-                metadata={"model": settings.providers.gemini_model, "raw_response": True},
+                metadata={"error": str(e)},
             )
 
     def supports_language(self, language: str) -> bool:

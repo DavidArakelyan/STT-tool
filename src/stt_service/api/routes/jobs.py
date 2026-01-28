@@ -135,6 +135,96 @@ async def get_job_progress(
     )
 
 
+@router.get("/{job_id}/logs")
+async def get_job_logs(
+    job_id: str,
+    job_repo: JobRepo,
+    chunk_repo: ChunkRepo,
+    _api_key: APIKey,
+) -> dict:
+    """Get detailed job logs and processing history."""
+    job = await job_repo.get_by_id(job_id)
+    chunks = await chunk_repo.get_chunks_for_job(job_id)
+
+    # Build log entries
+    log_entries = []
+
+    # Job created
+    log_entries.append({
+        "timestamp": job.created_at.isoformat(),
+        "level": "info",
+        "message": f"Job created - File: {job.original_filename}",
+    })
+
+    # File uploaded
+    if job.s3_original_key:
+        log_entries.append({
+            "timestamp": job.created_at.isoformat(),
+            "level": "info",
+            "message": f"File uploaded to storage ({job.file_size_bytes} bytes)",
+        })
+
+    # Chunks created
+    if job.total_chunks > 0:
+        log_entries.append({
+            "timestamp": job.created_at.isoformat(),
+            "level": "info",
+            "message": f"Audio split into {job.total_chunks} chunks for processing",
+        })
+
+    # Chunk processing details
+    for chunk in sorted(chunks, key=lambda c: c.chunk_index):
+        if chunk.status.value == "completed" and chunk.processed_at:
+            log_entries.append({
+                "timestamp": chunk.processed_at.isoformat(),
+                "level": "success",
+                "message": f"Chunk {chunk.chunk_index + 1} completed ({chunk.start_time:.1f}s - {chunk.end_time:.1f}s)",
+            })
+        elif chunk.status.value == "failed":
+            log_entries.append({
+                "timestamp": chunk.processed_at.isoformat() if chunk.processed_at else job.updated_at.isoformat(),
+                "level": "error",
+                "message": f"Chunk {chunk.chunk_index + 1} failed after {chunk.attempt_count} attempts: {chunk.last_error or 'Unknown error'}",
+            })
+        elif chunk.status.value == "processing":
+            log_entries.append({
+                "timestamp": job.updated_at.isoformat(),
+                "level": "info",
+                "message": f"Chunk {chunk.chunk_index + 1} is currently processing (attempt {chunk.attempt_count + 1})",
+            })
+
+    # Job error
+    if job.error_message:
+        log_entries.append({
+            "timestamp": job.updated_at.isoformat(),
+            "level": "error",
+            "message": f"Job error: {job.error_message}",
+        })
+
+    # Job completed
+    if job.completed_at:
+        log_entries.append({
+            "timestamp": job.completed_at.isoformat(),
+            "level": "success",
+            "message": f"Job completed successfully - {job.completed_chunks} chunks processed",
+        })
+
+    # Sort by timestamp
+    log_entries.sort(key=lambda x: x["timestamp"])
+
+    return {
+        "job_id": job.id,
+        "status": job.status.value,
+        "provider": job.provider,
+        "created_at": job.created_at.isoformat(),
+        "updated_at": job.updated_at.isoformat(),
+        "completed_at": job.completed_at.isoformat() if job.completed_at else None,
+        "total_chunks": job.total_chunks,
+        "completed_chunks": job.completed_chunks,
+        "logs": log_entries,
+    }
+
+
 @router.get("/{job_id}/result", response_model=TranscriptionResult)
 async def get_job_result(
     job_id: str,
@@ -191,6 +281,7 @@ async def get_job_result(
         job_id=job.id,
         status=JobStatus.COMPLETED,
         duration_seconds=job.duration_seconds or 0,
+        original_filename=job.original_filename,
         language_detected=result.get("metadata", {}).get("language_detected"),
         provider_used=job.provider or "unknown",
         transcript=transcript,

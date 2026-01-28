@@ -84,7 +84,18 @@ class StorageService:
             try:
                 extra_args: dict[str, Any] = {"ContentType": content_type}
                 if metadata:
-                    extra_args["Metadata"] = metadata
+                    # Sanitize metadata - S3 only supports ASCII in metadata
+                    sanitized_metadata = {}
+                    for k, v in metadata.items():
+                        # URL-encode non-ASCII characters
+                        try:
+                            v.encode('ascii')
+                            sanitized_metadata[k] = v
+                        except UnicodeEncodeError:
+                            # Use URL encoding for non-ASCII values
+                            from urllib.parse import quote
+                            sanitized_metadata[k] = quote(v, safe='')
+                    extra_args["Metadata"] = sanitized_metadata
 
                 if isinstance(data, bytes):
                     data = io.BytesIO(data)
