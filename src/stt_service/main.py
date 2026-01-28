@@ -6,7 +6,8 @@ from typing import AsyncGenerator
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from stt_service.api.routes import health, jobs, transcription
 from stt_service.config import get_settings
@@ -149,6 +150,17 @@ def create_app() -> FastAPI:
         jobs.router,
         prefix=settings.api_prefix,
     )
+
+    # Mount frontend static files
+    import os
+    frontend_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "frontend")
+    if os.path.exists(frontend_path):
+        app.mount("/static", StaticFiles(directory=frontend_path), name="static")
+
+        @app.get("/")
+        async def serve_frontend() -> FileResponse:
+            """Serve the frontend application."""
+            return FileResponse(os.path.join(frontend_path, "index.html"))
 
     return app
 

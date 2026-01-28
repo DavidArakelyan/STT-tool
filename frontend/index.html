@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>STT Service - Speech to Text</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <h1>🎙️ Speech to Text</h1>
+            <p class="subtitle">Multi-provider transcription service with Armenian language support</p>
+        </header>
+
+        <!-- API Key Section -->
+        <div class="card api-key-section">
+            <label for="apiKey">API Key</label>
+            <div class="input-group">
+                <input type="password" id="apiKey" placeholder="Enter your API key" value="dev-test-key">
+                <button class="btn btn-secondary" onclick="toggleApiKeyVisibility()">👁️</button>
+            </div>
+        </div>
+
+        <!-- Upload Section -->
+        <div class="card upload-section">
+            <h2>Upload Audio</h2>
+
+            <div class="dropzone" id="dropzone">
+                <div class="dropzone-content">
+                    <span class="dropzone-icon">📁</span>
+                    <p>Drag and drop audio file here</p>
+                    <p class="dropzone-hint">or click to browse</p>
+                    <p class="supported-formats">Supported: mp3, wav, m4a, flac, ogg, webm, aac, wma, opus</p>
+                </div>
+                <input type="file" id="fileInput" accept=".mp3,.wav,.m4a,.flac,.ogg,.webm,.aac,.wma,.opus" hidden>
+            </div>
+
+            <div class="selected-file-card" id="selectedFile" style="display: none;">
+                <div class="selected-file-header">
+                    <span class="file-ready-badge">✓ Ready to Transcribe</span>
+                    <button class="btn btn-icon btn-remove" onclick="clearFile()" title="Remove file">✕</button>
+                </div>
+                <div class="selected-file-content">
+                    <span class="file-icon-large">🎵</span>
+                    <div class="selected-file-info">
+                        <span class="file-name-large" id="fileName"></span>
+                        <div class="file-details">
+                            <span class="file-size-badge" id="fileSize"></span>
+                            <span class="file-type-badge" id="fileType"></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Settings -->
+            <div class="settings-grid">
+                <div class="form-group">
+                    <label for="provider">Provider</label>
+                    <select id="provider">
+                        <option value="hispeech">HiSpeech (Armenian)</option>
+                        <option value="gemini">Gemini</option>
+                        <option value="elevenlabs">ElevenLabs</option>
+                        <option value="whisper">OpenAI Whisper</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="language">Language</label>
+                    <select id="language">
+                        <option value="hy">Armenian (hy)</option>
+                        <option value="en">English (en)</option>
+                        <option value="ru">Russian (ru)</option>
+                    </select>
+                </div>
+            </div>
+
+            <button class="btn btn-primary btn-large" id="submitBtn" onclick="submitTranscription()" disabled>
+                <span class="btn-text">Start Transcription</span>
+                <span class="btn-spinner" style="display: none;"></span>
+            </button>
+        </div>
+
+        <!-- Jobs Section -->
+        <div class="card jobs-section">
+            <div class="section-header">
+                <h2>Transcription Jobs</h2>
+                <button class="btn btn-secondary" onclick="refreshJobs()">🔄 Refresh</button>
+            </div>
+
+            <div class="jobs-list" id="jobsList">
+                <div class="empty-state">
+                    <span>📋</span>
+                    <p>No jobs yet. Upload an audio file to get started.</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Result Modal -->
+        <div class="modal" id="resultModal">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>Transcription Result</h2>
+                    <button class="btn btn-icon" onclick="closeModal()">✕</button>
+                </div>
+                <div class="modal-body">
+                    <div class="result-meta" id="resultMeta"></div>
+                    <div class="transcript-container">
+                        <textarea id="transcriptText" readonly></textarea>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="copyTranscript()">📋 Copy</button>
+                    <button class="btn btn-primary" onclick="downloadTranscript()">⬇️ Download</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Delete Confirmation Modal -->
+        <div class="modal" id="deleteModal">
+            <div class="modal-content modal-small">
+                <div class="modal-header">
+                    <h2>🗑️ Delete Job</h2>
+                    <button class="btn btn-icon" onclick="closeDeleteModal()">✕</button>
+                </div>
+                <div class="modal-body">
+                    <p class="delete-warning">Are you sure you want to delete this job and all its artifacts?</p>
+                    <div class="delete-details">
+                        <div class="delete-detail-item">
+                            <span class="label">File:</span>
+                            <span id="deleteFileName">-</span>
+                        </div>
+                        <div class="delete-detail-item">
+                            <span class="label">Job ID:</span>
+                            <span id="deleteJobId">-</span>
+                        </div>
+                        <div class="delete-detail-item">
+                            <span class="label">Chunks:</span>
+                            <span id="deleteChunkCount">0</span>
+                        </div>
+                    </div>
+                    <p class="delete-note">⚠️ This will permanently delete:</p>
+                    <ul class="delete-list">
+                        <li>Original audio file from storage</li>
+                        <li>All processed chunks</li>
+                        <li>Transcription results</li>
+                        <li>Job metadata from database</li>
+                    </ul>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeDeleteModal()">Cancel</button>
+                    <button class="btn btn-danger" onclick="confirmDelete()">🗑️ Delete Permanently</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast Container -->
+        <div class="toast-container" id="toastContainer"></div>
+    </div>
+
+    <script src="/static/app.js"></script>
+    <script>
+        // Close delete modal on outside click
+        document.getElementById('deleteModal').addEventListener('click', (e) => {
+            if (e.target.id === 'deleteModal') {
+                closeDeleteModal();
+            }
+        });
+    </script>
+</body>
+
+</html>

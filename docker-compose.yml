@@ -25,6 +25,7 @@ services:
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
     volumes:
       - ./src:/app/src
+      - ./frontend:/app/frontend
       - ./migrations:/app/migrations
     depends_on:
       postgres:
@@ -83,7 +84,7 @@ services:
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U stt_user -d stt_db"]
+      test: [ "CMD-SHELL", "pg_isready -U stt_user -d stt_db" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -92,11 +93,11 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6380:6379"  # Use 6380 externally to avoid conflict
+      - "6380:6379" # Use 6380 externally to avoid conflict
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -120,13 +121,7 @@ services:
     depends_on:
       - minio
     entrypoint: >
-      /bin/sh -c "
-      sleep 5;
-      mc alias set myminio http://minio:9000 minioadmin minioadmin;
-      mc mb myminio/stt-files --ignore-existing;
-      mc anonymous set download myminio/stt-files;
-      exit 0;
-      "
+      /bin/sh -c " sleep 5; mc alias set myminio http://minio:9000 minioadmin minioadmin; mc mb myminio/stt-files --ignore-existing; mc anonymous set download myminio/stt-files; exit 0; "
 
   # Flower for Celery monitoring (optional)
   flower:
@@ -149,6 +144,7 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+
 
 networks:
   default:
