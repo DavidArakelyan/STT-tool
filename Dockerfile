@@ -39,9 +39,10 @@ COPY src/ src/
 COPY alembic.ini .
 COPY migrations/ migrations/
 
-# Create non-root user
+# Create non-root user and logs directory
 RUN useradd -m -u 1000 appuser && \
-    chown -R appuser:appuser /app
+    mkdir -p /app/logs && \
+    chown -R appuser:appuser /app /app/logs
 
 USER appuser
 

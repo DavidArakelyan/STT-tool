@@ -3,6 +3,10 @@
 from celery import Celery
 
 from stt_service.config import get_settings
+from stt_service.utils.logging_config import configure_logging
+
+# Configure logging
+configure_logging()
 
 settings = get_settings()
 

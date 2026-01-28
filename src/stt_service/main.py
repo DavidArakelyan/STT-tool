@@ -13,6 +13,10 @@ from stt_service.api.routes import health, jobs, transcription
 from stt_service.config import get_settings
 from stt_service.db.session import close_db, init_db
 from stt_service.services.storage import storage_service
+from stt_service.utils.logging_config import configure_logging
+
+# Configure logging before doing anything else
+configure_logging()
 from stt_service.utils.exceptions import (
     AuthenticationError,
     JobNotFoundError,

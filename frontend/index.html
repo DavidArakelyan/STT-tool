@@ -131,9 +131,24 @@
                     <div class="logs-container" id="logsContainer">
                         <div class="logs-loading">Loading logs...</div>
                     </div>
+                    <div class="system-logs-container" id="systemLogsContainer" style="display: none;">
+                        <div class="system-logs-header">
+                            <span class="system-logs-title">🖥️ System Developer Logs (Real-time)</span>
+                            <button class="btn btn-secondary btn-sm" onclick="toggleSystemLogs()">⬅️ Back to Job
+                                Logs</button>
+                        </div>
+                        <div class="system-logs-content" id="systemLogsContent">
+                            <div class="logs-loading">Initializing real-time stream...</div>
+                        </div>
+                    </div>
                 </div>
                 <div class="modal-footer">
-                    <button class="btn btn-secondary" onclick="refreshLogs()">🔄 Refresh</button>
+                    <div class="modal-footer-left">
+                        <button class="btn btn-secondary" onclick="refreshLogs()" id="refreshLogsBtn">🔄
+                            Refresh</button>
+                        <button class="btn btn-dark" onclick="toggleSystemLogs()" id="detailedLogsBtn">🔍 Detailed
+                            Logs</button>
+                    </div>
                     <button class="btn btn-secondary" onclick="closeLogsModal()">Close</button>
                 </div>
             </div>

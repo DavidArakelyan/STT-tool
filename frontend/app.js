@@ -1,6 +1,7 @@
 // ===== Configuration =====
 const API_BASE = '/api/v1';
 let pollingIntervals = {};
+let systemLogInterval = null;
 let currentTranscript = null;
 
 // ===== Initialize =====
@@ -8,6 +9,9 @@ document.addEventListener('DOMContentLoaded', () => {
     initDropzone();
     loadApiKey();
     refreshJobs();
+
+    // Update active job timers every second
+    setInterval(updateLiveTimers, 1000);
 });
 
 // ===== API Key Management =====
@@ -218,7 +222,7 @@ function renderJobCard(job) {
         : `${elapsedSeconds}s`;
 
     return `
-        <div class="job-card ${isActive ? 'job-active' : ''}" id="job-${job.job_id}">
+        <div class="job-card ${isActive ? 'job-active' : ''}" id="job-${job.job_id}" data-created-at="${job.created_at}">
             <div class="job-header">
                 <div class="job-info">
                     <h3>${job.original_filename || 'Unknown file'}</h3>
@@ -240,9 +244,14 @@ function renderJobCard(job) {
             ${isActive ? `
                 <div class="status-detail">
                     <span class="elapsed-time">⏱️ Elapsed: ${elapsedStr}</span>
-                    ${job.status === 'processing' ? `<span class="processing-info">Processing with ${job.provider || 'provider'}...</span>` : ''}
+                    ${job.status === 'processing' ? `
+                        <span class="processing-info">
+                            ${job.total_chunks > 0
+                    ? `Processing chunk ${job.completed_chunks + 1} of ${job.total_chunks}...`
+                    : `Processing audio chunks with ${job.provider || 'provider'}...`}
+                        </span>` : ''}
                     ${job.status === 'pending' ? `<span class="processing-info">Waiting in queue...</span>` : ''}
-                    ${job.status === 'uploaded' ? `<span class="processing-info">Preparing audio chunks...</span>` : ''}
+                    ${job.status === 'uploaded' ? `<span class="processing-info">Splitting audio into chunks...</span>` : ''}
                 </div>
             ` : ''}
 
@@ -320,12 +329,50 @@ function updateJobCard(jobId, progress) {
     const card = document.getElementById(`job-${jobId}`);
     if (!card) return;
 
+    // Update status badge and classes
+    const statusBadge = card.querySelector('.status-badge');
+    if (statusBadge) {
+        statusBadge.className = `status-badge status-${progress.status}`;
+        const statusIcon = {
+            pending: '⏳', uploaded: '📤', processing: '⚙️',
+            completed: '✅', failed: '❌', cancelled: '🚫'
+        }[progress.status] || '❓';
+        statusBadge.innerHTML = `${statusIcon} ${progress.status}`;
+    }
+
+    if (['completed', 'failed', 'cancelled'].includes(progress.status)) {
+        card.classList.remove('job-active');
+        const spinner = card.querySelector('.status-spinner');
+        if (spinner) spinner.remove();
+    } else {
+        card.classList.add('job-active');
+    }
+
+    // Update processing info message
+    const infoSpan = card.querySelector('.processing-info');
+    if (infoSpan) {
+        if (progress.status === 'processing') {
+            infoSpan.textContent = progress.total_chunks > 0
+                ? `Processing chunk ${progress.completed_chunks + 1} of ${progress.total_chunks}...`
+                : `Processing audio chunks...`;
+        } else if (progress.status === 'uploaded') {
+            infoSpan.textContent = 'Splitting audio into chunks...';
+        } else if (progress.status === 'pending') {
+            infoSpan.textContent = 'Waiting in queue...';
+        }
+    }
+
     const progressBar = card.querySelector('.progress-fill');
     if (progressBar) {
         const percent = progress.total_chunks > 0
             ? Math.round((progress.completed_chunks / progress.total_chunks) * 100)
             : 0;
         progressBar.style.width = `${percent}%`;
+        if (progress.status === 'processing') {
+            progressBar.classList.add('progress-animated');
+        } else {
+            progressBar.classList.remove('progress-animated');
+        }
 
         const textSpans = card.querySelectorAll('.progress-text span');
         if (textSpans.length === 2) {
@@ -339,6 +386,29 @@ function updateJobCard(jobId, progress) {
     if (chunksSection && chunksSection.dataset.expanded === 'true' && progress.chunks) {
         renderChunks(jobId, progress.chunks);
     }
+}
+
+function updateLiveTimers() {
+    const activeCards = document.querySelectorAll('.job-card.job-active');
+    activeCards.forEach(card => {
+        const createdAt = card.dataset.createdAt;
+        if (!createdAt) return;
+
+        const createdDate = new Date(createdAt);
+        const now = new Date();
+        const elapsedMs = now - createdDate;
+
+        const elapsedMinutes = Math.floor(elapsedMs / 60000);
+        const elapsedSeconds = Math.floor((elapsedMs % 60000) / 1000);
+        const elapsedStr = elapsedMinutes > 0
+            ? `${elapsedMinutes}m ${elapsedSeconds}s`
+            : `${elapsedSeconds}s`;
+
+        const timerSpan = card.querySelector('.elapsed-time');
+        if (timerSpan) {
+            timerSpan.textContent = `⏱️ Elapsed: ${elapsedStr}`;
+        }
+    });
 }
 
 // ===== Chunks =====
@@ -625,8 +695,17 @@ let currentLogsJobId = null;
 async function viewLogs(jobId) {
     currentLogsJobId = jobId;
     const modal = document.getElementById('logsModal');
-    const metaContainer = document.getElementById('logsMeta');
     const logsContainer = document.getElementById('logsContainer');
+    const sysLogsContainer = document.getElementById('systemLogsContainer');
+    const detailedBtn = document.getElementById('detailedLogsBtn');
+    const refreshBtn = document.getElementById('refreshLogsBtn');
+
+    // Reset view to standard logs
+    logsContainer.style.display = 'block';
+    sysLogsContainer.style.display = 'none';
+    detailedBtn.style.display = 'inline-block';
+    refreshBtn.style.display = 'inline-block';
+    stopSystemLogsPolling();
 
     // Show loading state
     logsContainer.innerHTML = '<div class="logs-loading">Loading logs...</div>';
@@ -712,12 +791,120 @@ function renderLogs(data) {
 function closeLogsModal() {
     document.getElementById('logsModal').classList.remove('open');
     currentLogsJobId = null;
+    stopSystemLogsPolling();
 }
 
 function refreshLogs() {
     if (currentLogsJobId) {
         viewLogs(currentLogsJobId);
     }
+}
+
+// ===== System Logs (Developer View) =====
+function toggleSystemLogs() {
+    const logsContainer = document.getElementById('logsContainer');
+    const sysLogsContainer = document.getElementById('systemLogsContainer');
+    const detailedBtn = document.getElementById('detailedLogsBtn');
+    const refreshBtn = document.getElementById('refreshLogsBtn');
+
+    if (sysLogsContainer.style.display === 'none') {
+        // Switch to system logs
+        logsContainer.style.display = 'none';
+        sysLogsContainer.style.display = 'flex';
+        detailedBtn.style.display = 'none';
+        refreshBtn.style.display = 'none';
+        startSystemLogsPolling();
+    } else {
+        // Switch back to job logs
+        logsContainer.style.display = 'block';
+        sysLogsContainer.style.display = 'none';
+        detailedBtn.style.display = 'inline-block';
+        refreshBtn.style.display = 'inline-block';
+        stopSystemLogsPolling();
+    }
+}
+
+function startSystemLogsPolling() {
+    if (systemLogInterval) clearInterval(systemLogInterval);
+    fetchSystemLogs(); // Initial fetch
+    systemLogInterval = setInterval(fetchSystemLogs, 3000);
+}
+
+function stopSystemLogsPolling() {
+    if (systemLogInterval) {
+        clearInterval(systemLogInterval);
+        systemLogInterval = null;
+    }
+}
+
+async function fetchSystemLogs() {
+    if (!currentLogsJobId) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/jobs/${currentLogsJobId}/system-logs`, {
+            headers: { 'X-API-Key': getApiKey() }
+        });
+
+        if (!response.ok) throw new Error('Failed to fetch system logs');
+
+        const data = await response.json();
+        renderSystemLogs(data.logs);
+    } catch (error) {
+        console.error('System logs error:', error);
+    }
+}
+
+function renderSystemLogs(logs) {
+    const container = document.getElementById('systemLogsContent');
+    if (!container) return;
+
+    if (logs.length === 0) {
+        container.innerHTML = '<div class="logs-empty">No system logs found for this job ID yet. Waiting for events...</div>';
+        return;
+    }
+
+    const html = logs.map(line => {
+        let className = 'sys-log-line';
+
+        // Basic Syntax Highlighting
+        if (line.includes('ERROR') || line.includes('error')) className += ' sys-log-error';
+        else if (line.includes('WARNING') || line.includes('warning')) className += ' sys-log-warn';
+        else if (line.includes('INFO') || line.includes('info')) className += ' sys-log-info';
+        else if (line.includes('SUCCESS') || line.includes('success')) className += ' sys-log-success';
+
+        // Specific highlighting for Truth segments
+        let formattedLine = line;
+
+        // Highlight SQL
+        if (line.includes('SELECT') || line.includes('INSERT') || line.includes('UPDATE') || line.includes('COMMIT')) {
+            formattedLine = `<span class="sys-log-sql">${line}</span>`;
+        }
+
+        // Highlight Gemini API
+        if (line.includes('Gemini API request') || line.includes('Gemini API response')) {
+            formattedLine = `<div class="sys-log-api">${line}</div>`;
+        }
+
+        // Highlight Worker events
+        if (line.includes('ForkPoolWorker') || line.includes('celery')) {
+            formattedLine = line.replace(/(ForkPoolWorker-\d+|celery)/g, '<span class="sys-log-worker">$1</span>');
+        }
+
+        // Highlight Tracebacks
+        if (line.includes('Traceback') || line.includes('File "')) {
+            formattedLine = `<span class="sys-log-trace">${line}</span>`;
+        }
+
+        // Extract and wrap timestamp if possible (ISO format 2026-...)
+        formattedLine = formattedLine.replace(/^(\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}:\d{2},\d{3})/, '<span class="sys-log-timestamp">$1</span>');
+        formattedLine = formattedLine.replace(/^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z?)/, '<span class="sys-log-timestamp">$1</span>');
+
+        return `<span class="${className}">${formattedLine}</span>`;
+    }).join('');
+
+    container.innerHTML = html;
+    // Auto-scroll to bottom if at bottom
+    container.scrollTop = container.scrollHeight;
 }
 
 // Close logs modal on outside click

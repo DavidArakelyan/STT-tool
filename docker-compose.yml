@@ -27,6 +27,7 @@ services:
       - ./src:/app/src
       - ./frontend:/app/frontend
       - ./migrations:/app/migrations
+      - logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -64,6 +65,7 @@ services:
       - PROVIDER_HISPEECH_API_URL=${PROVIDER_HISPEECH_API_URL:-https://api.hispeech.ai}
     volumes:
       - ./src:/app/src
+      - logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -145,6 +147,7 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+  logs:
 
 
 networks:

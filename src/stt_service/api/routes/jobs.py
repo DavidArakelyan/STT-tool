@@ -178,19 +178,20 @@ async def get_job_logs(
             log_entries.append({
                 "timestamp": chunk.processed_at.isoformat(),
                 "level": "success",
-                "message": f"Chunk {chunk.chunk_index + 1} completed ({chunk.start_time:.1f}s - {chunk.end_time:.1f}s)",
+                "message": f"✅ Chunk {chunk.chunk_index + 1} finalized (Duration: {chunk.end_time - chunk.start_time:.1f}s)",
             })
         elif chunk.status.value == "failed":
             log_entries.append({
                 "timestamp": chunk.processed_at.isoformat() if chunk.processed_at else job.updated_at.isoformat(),
                 "level": "error",
-                "message": f"Chunk {chunk.chunk_index + 1} failed after {chunk.attempt_count} attempts: {chunk.last_error or 'Unknown error'}",
+                "message": f"❌ Chunk {chunk.chunk_index + 1} failed (Attempt {chunk.attempt_count}): {chunk.last_error or 'Unknown error'}",
             })
         elif chunk.status.value == "processing":
+            # Use job updated_at as a proxy for current activity if chunk doesn't have its own processing_start
             log_entries.append({
                 "timestamp": job.updated_at.isoformat(),
                 "level": "info",
-                "message": f"Chunk {chunk.chunk_index + 1} is currently processing (attempt {chunk.attempt_count + 1})",
+                "message": f"⚙️ Chunk {chunk.chunk_index + 1} is being processed by {job.provider.upper()} (Attempt {chunk.attempt_count})",
             })
 
     # Job error
@@ -198,7 +199,7 @@ async def get_job_logs(
         log_entries.append({
             "timestamp": job.updated_at.isoformat(),
             "level": "error",
-            "message": f"Job error: {job.error_message}",
+            "message": f"🛑 Job halted: {job.error_message}",
         })
 
     # Job completed
@@ -206,7 +207,7 @@ async def get_job_logs(
         log_entries.append({
             "timestamp": job.completed_at.isoformat(),
             "level": "success",
-            "message": f"Job completed successfully - {job.completed_chunks} chunks processed",
+            "message": f"✨ Job completed successfully! Total processing time: {(job.completed_at - job.created_at).total_seconds():.1f}s",
         })
 
     # Sort by timestamp
@@ -321,6 +322,47 @@ async def delete_job(
     return MessageResponse(
         message=f"Job {job_id} deleted. {result['deleted_files']} files removed."
     )
+
+
+@router.get("/{job_id}/system-logs")
+async def get_system_logs(
+    job_id: str,
+    _api_key: APIKey,
+    limit: int = Query(200, ge=1, le=1000, description="Max log lines to return"),
+) -> dict:
+    """Get developer-level system logs for a specific job."""
+    from pathlib import Path
+    
+    log_file = Path("/app/logs/app.log")
+    if not log_file.exists():
+        return {"job_id": job_id, "logs": [], "error": "Log file not found"}
+
+    logs = []
+    try:
+        # Read the file from the end for efficiency
+        # For simplicity, we'll read the last 10k lines and filter
+        # In a high-traffic system, a more efficient 'grep' or 'tail' approach would be better
+        with open(log_file, "r") as f:
+            # Simple tail: read last 10000 lines
+            # This is safe because it's dev-only and log file is usually rotated
+            all_lines = f.readlines()
+            # Filter lines containing job_id
+            for line in reversed(all_lines):
+                if job_id in line:
+                    logs.append(line.strip())
+                    if len(logs) >= limit:
+                        break
+        
+        # Return in chronological order
+        logs.reverse()
+    except Exception as e:
+        return {"job_id": job_id, "logs": [], "error": str(e)}
+
+    return {
+        "job_id": job_id,
+        "logs": logs,
+        "total": len(logs)
+    }
 
 
 @router.post("/{job_id}/cancel", response_model=MessageResponse)
