@@ -1,0 +1,7 @@
+docker compose restart worker api
+docker compose up -d --force-recreate
+docker compose up -d --force-recreate worker
+docker logs -f stt-tool-api-1
+docker logs -f stt-tool-worker-1
+docker compose down
+docker compose up

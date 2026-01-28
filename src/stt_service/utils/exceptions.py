@@ -77,6 +77,12 @@ class JobNotFoundError(STTServiceError):
     pass
 
 
+class JobCancelledError(STTServiceError):
+    """Job was cancelled or deleted."""
+
+    pass
+
+
 class JobAlreadyExistsError(STTServiceError):
     """Job already exists."""
 

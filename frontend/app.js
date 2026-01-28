@@ -565,13 +565,7 @@ async function downloadResult(jobId) {
         const result = await response.json();
         const text = result.transcript.full_text;
 
-        // Use original filename if available, otherwise fallback to ID
-        let filename = `transcript_${jobId.slice(0, 8)}.txt`;
-        if (result.original_filename) {
-            const baseName = result.original_filename.split('.').slice(0, -1).join('.') || result.original_filename;
-            filename = `${baseName}_transcript.txt`;
-        }
-
+        const filename = getDownloadFilename(result);
         downloadTextFile(text, filename);
         showToast('Transcript downloaded', 'success');
     } catch (error) {
@@ -638,12 +632,31 @@ function copyTranscript() {
     showToast('Copied to clipboard', 'success');
 }
 
+// Helper to generate consistent download filename
+function getDownloadFilename(result) {
+    if (result.original_filename) {
+        const baseName = result.original_filename.split('.').slice(0, -1).join('.') || result.original_filename;
+        return `${baseName}_transcript.txt`;
+    }
+    const id = result.job_id || 'unknown';
+    return `transcript_${id.slice(0, 8)}.txt`;
+}
+
+// Download result from the modal
 function downloadTranscript() {
-    if (!currentTranscript) return;
+    if (!currentTranscript || !currentTranscript.transcript) {
+        showToast('No transcript data available to download', 'error');
+        return;
+    }
 
     const text = currentTranscript.transcript.full_text;
-    const filename = `transcript_${currentTranscript.job_id.slice(0, 8)}.txt`;
+    if (!text) {
+        showToast('Transcript is empty', 'warning');
+    }
+
+    const filename = getDownloadFilename(currentTranscript);
     downloadTextFile(text, filename);
+    showToast('Transcript downloaded', 'success');
 }
 
 async function downloadPartial(jobId) {
@@ -813,6 +826,8 @@ function toggleSystemLogs() {
         sysLogsContainer.style.display = 'flex';
         detailedBtn.style.display = 'none';
         refreshBtn.style.display = 'none';
+        currentSystemTab = 'all';
+        updateTabButtons();
         startSystemLogsPolling();
     } else {
         // Switch back to job logs
@@ -822,6 +837,26 @@ function toggleSystemLogs() {
         refreshBtn.style.display = 'inline-block';
         stopSystemLogsPolling();
     }
+}
+
+function switchSystemTab(tab) {
+    currentSystemTab = tab;
+    updateTabButtons();
+    fetchSystemLogs(); // Refresh view
+}
+
+function updateTabButtons() {
+    const tabs = document.querySelectorAll('.system-tabs .tab-btn');
+    tabs.forEach(btn => {
+        const tabOnClick = btn.getAttribute('onclick');
+        if (tabOnClick) {
+            const match = tabOnClick.match(/'([^']+)'/);
+            if (match && match[1]) {
+                const tabName = match[1];
+                btn.classList.toggle('active', tabName === currentSystemTab);
+            }
+        }
+    });
 }
 
 function startSystemLogsPolling() {
@@ -863,20 +898,62 @@ function renderSystemLogs(logs) {
         return;
     }
 
-    const html = logs.map(line => {
+    // Filter logs based on current tab
+    const filteredLogs = logs.filter(line => {
+        if (currentSystemTab === 'all') return true;
+
+        const lineUpper = line.toUpperCase();
+
+        if (currentSystemTab === 'gemini') {
+            return line.includes('Gemini') || line.includes('generativeai');
+        }
+
+        if (currentSystemTab === 'sql') {
+            return line.includes('sqlalchemy.engine') ||
+                line.includes('SELECT ') ||
+                line.includes('INSERT ') ||
+                line.includes('UPDATE ') ||
+                line.includes('COMMIT') ||
+                line.includes('BEGIN');
+        }
+
+        if (currentSystemTab === 'worker') {
+            return line.includes('celery') ||
+                line.includes('ForkPoolWorker') ||
+                line.includes('MainProcess') ||
+                line.includes('heartbeat');
+        }
+
+        if (currentSystemTab === 'errors') {
+            return line.includes('Traceback') ||
+                line.includes('Exception') ||
+                lineUpper.includes('ERROR') ||
+                lineUpper.includes('FAIL');
+        }
+
+        return true;
+    });
+
+    if (filteredLogs.length === 0) {
+        container.innerHTML = `<div class="logs-empty">No logs matching the "${currentSystemTab}" filter.</div>`;
+        return;
+    }
+
+    const html = filteredLogs.map(line => {
         let className = 'sys-log-line';
 
         // Basic Syntax Highlighting
-        if (line.includes('ERROR') || line.includes('error')) className += ' sys-log-error';
-        else if (line.includes('WARNING') || line.includes('warning')) className += ' sys-log-warn';
-        else if (line.includes('INFO') || line.includes('info')) className += ' sys-log-info';
-        else if (line.includes('SUCCESS') || line.includes('success')) className += ' sys-log-success';
+        const lineUpper = line.toUpperCase();
+        if (lineUpper.includes('ERROR') || lineUpper.includes('FAIL')) className += ' sys-log-error';
+        else if (lineUpper.includes('WARNING')) className += ' sys-log-warn';
+        else if (lineUpper.includes('INFO')) className += ' sys-log-info';
+        else if (lineUpper.includes('SUCCESS')) className += ' sys-log-success';
 
         // Specific highlighting for Truth segments
         let formattedLine = line;
 
         // Highlight SQL
-        if (line.includes('SELECT') || line.includes('INSERT') || line.includes('UPDATE') || line.includes('COMMIT')) {
+        if (line.includes('SELECT') || line.includes('INSERT') || line.includes('UPDATE') || line.includes('COMMIT') || line.includes('BEGIN')) {
             formattedLine = `<span class="sys-log-sql">${line}</span>`;
         }
 
@@ -891,7 +968,7 @@ function renderSystemLogs(logs) {
         }
 
         // Highlight Tracebacks
-        if (line.includes('Traceback') || line.includes('File "')) {
+        if (line.includes('Traceback') || line.includes('File "') || line.includes('Exception')) {
             formattedLine = `<span class="sys-log-trace">${line}</span>`;
         }
 

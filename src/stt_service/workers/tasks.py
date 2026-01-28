@@ -16,6 +16,7 @@ from stt_service.db.models import ChunkStatus, JobStatus
 from stt_service.db.repositories.chunk import ChunkRepository
 from stt_service.db.repositories.job import JobRepository
 from stt_service.db.session import get_db_context
+from stt_service.utils.exceptions import JobCancelledError, JobNotFoundError
 from stt_service.providers import TranscriptionConfig, get_provider
 from stt_service.services.rate_limiter import setup_default_limits
 from stt_service.services.storage import storage_service
@@ -57,6 +58,9 @@ def process_transcription_job(self, job_id: str) -> dict[str, Any]:
 async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
     """Async implementation of job processing."""
     setup_default_limits()
+    
+    # Bind job_id to all logs in this task context
+    structlog.contextvars.bind_contextvars(job_id=job_id)
 
     async with get_db_context() as session:
         job_repo = JobRepository(session)
@@ -154,11 +158,20 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
 
                     # Transcribe chunk
                     try:
+                        # Define retry callback to check for cancellation
+                        async def on_retry_check(attempt, exc, delay):
+                            job = await job_repo.get_by_id_or_none(job_id)
+                            if not job:
+                                raise JobCancelledError(f"Job {job_id} not found (deleted)")
+                            if job.status not in [JobStatus.UPLOADED, JobStatus.PROCESSING]:
+                                raise JobCancelledError(f"Job {job_id} status is {job.status}")
+
                         result = await _process_single_chunk(
                             provider,
                             chunk,
                             transcription_config,
                             provider_name,
+                            on_retry=on_retry_check,
                         )
 
                         # Store result
@@ -207,6 +220,10 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                     "chunks_processed": len(results),
                 }
 
+        except (JobCancelledError, JobNotFoundError) as e:
+            logger.warning("Job cancelled or deleted, aborting task", job_id=job_id, reason=str(e))
+            return {"job_id": job_id, "status": "cancelled", "reason": str(e)}
+
         except Exception as e:
             logger.error("Transcription job failed", job_id=job_id, error=str(e))
             await job_repo.update_status(job_id, JobStatus.FAILED, error_message=str(e))
@@ -223,6 +240,7 @@ async def _process_single_chunk(
     chunk: ChunkInfo,
     config: TranscriptionConfig,
     provider_name: str,
+    on_retry: Any = None,
 ) -> dict[str, Any]:
     """Process a single audio chunk with retry logic."""
 
@@ -235,6 +253,7 @@ async def _process_single_chunk(
         do_transcribe,
         config=RetryConfig.from_settings(),
         provider=provider_name,
+        on_retry=on_retry,
     )
 
     # Convert to dict for storage
@@ -299,6 +318,9 @@ def process_chunk(
 async def _process_chunk(task, job_id: str, chunk_index: int) -> dict[str, Any]:
     """Async implementation of single chunk processing."""
     setup_default_limits()
+    
+    # Bind context for chunk logs
+    structlog.contextvars.bind_contextvars(job_id=job_id, chunk_index=chunk_index)
 
     async with get_db_context() as session:
         job_repo = JobRepository(session)
@@ -335,8 +357,20 @@ async def _process_chunk(task, job_id: str, chunk_index: int) -> dict[str, Any]:
                     file_path=temp_path,
                 )
 
+                # Define retry callback
+                async def on_retry_check(attempt, exc, delay):
+                    job_check = await job_repo.get_by_id_or_none(job_id)
+                    if not job_check:
+                        raise JobCancelledError(f"Job {job_id} not found (deleted)")
+                    
+                    # Also check chunk status?
+                    chunk_check = await chunk_repo.get_by_job_and_index(job_id, chunk_index)
+                    if not chunk_check or chunk_check.status == ChunkStatus.FAILED:
+                         # If manually marked failed/deleted
+                         raise JobCancelledError(f"Chunk {chunk_index} cancelled")
+
                 result = await _process_single_chunk(
-                    provider, chunk_info, config, provider_name
+                    provider, chunk_info, config, provider_name, on_retry=on_retry_check
                 )
 
                 await chunk_repo.set_result(chunk.id, result)
@@ -347,6 +381,11 @@ async def _process_chunk(task, job_id: str, chunk_index: int) -> dict[str, Any]:
             finally:
                 if os.path.exists(temp_path):
                     os.unlink(temp_path)
+
+        except (JobCancelledError, JobNotFoundError) as e:
+             logger.warning("Chunk cancelled or deleted, aborting", job_id=job_id, chunk_index=chunk_index)
+             # Do NOT raise retry, just exit
+             return {"status": "cancelled", "reason": str(e)}
 
         except Exception as e:
             logger.error(

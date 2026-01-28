@@ -705,6 +705,37 @@ select {
     border-bottom: 1px solid var(--border-color);
 }
 
+.system-tabs {
+    display: flex;
+    gap: 0.5rem;
+    margin: 0.5rem 0;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid #30363d;
+}
+
+.tab-btn {
+    background: transparent;
+    border: none;
+    color: #8b949e;
+    padding: 0.4rem 0.8rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.tab-btn:hover {
+    background: #21262d;
+    color: #c9d1d9;
+}
+
+.tab-btn.active {
+    background: #161b22;
+    color: #58a6ff;
+    box-shadow: 0 0 0 1px #30363d;
+}
+
 .system-logs-title {
     font-size: 0.9rem;
     font-weight: 600;

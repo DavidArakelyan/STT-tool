@@ -3,9 +3,15 @@
 from celery import Celery
 
 from stt_service.config import get_settings
+from celery.signals import setup_logging
 from stt_service.utils.logging_config import configure_logging
 
-# Configure logging
+# Configure logging and prevent Celery from hijacking it
+@setup_logging.connect
+def setup_celery_logging(**kwargs):
+    configure_logging()
+
+# Also run it immediately for import time
 configure_logging()
 
 settings = get_settings()

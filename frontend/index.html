@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>STT Service - Speech to Text</title>
-    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="stylesheet" href="/static/styles.css?v=2">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
 
@@ -137,6 +137,13 @@
                             <button class="btn btn-secondary btn-sm" onclick="toggleSystemLogs()">⬅️ Back to Job
                                 Logs</button>
                         </div>
+                        <div class="system-tabs">
+                            <button class="tab-btn active" onclick="switchSystemTab('all')">All</button>
+                            <button class="tab-btn" onclick="switchSystemTab('gemini')">Gemini API</button>
+                            <button class="tab-btn" onclick="switchSystemTab('sql')">SQL</button>
+                            <button class="tab-btn" onclick="switchSystemTab('worker')">Worker</button>
+                            <button class="tab-btn" onclick="switchSystemTab('errors')">Errors</button>
+                        </div>
                         <div class="system-logs-content" id="systemLogsContent">
                             <div class="logs-loading">Initializing real-time stream...</div>
                         </div>
@@ -196,7 +203,7 @@
         <div class="toast-container" id="toastContainer"></div>
     </div>
 
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=2"></script>
     <script>
         // Close delete modal on outside click
         document.getElementById('deleteModal').addEventListener('click', (e) => {
