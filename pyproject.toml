@@ -1,0 +1,87 @@
+[project]
+name = "stt-service"
+version = "0.1.0"
+description = "Speech-to-Text service with multi-provider support, speaker diarization, and Armenian language optimization"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "AI Transformation Squad" }]
+
+dependencies = [
+    # Web framework
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "python-multipart>=0.0.9",
+
+    # Database
+    "sqlalchemy[asyncio]>=2.0.25",
+    "asyncpg>=0.29.0",
+    "psycopg2-binary>=2.9.9",  # For Alembic migrations
+    "alembic>=1.13.0",
+
+    # Task queue
+    "celery[redis]>=5.3.6",
+    "redis>=5.0.1",
+
+    # Object storage
+    "boto3>=1.34.0",
+    "aioboto3>=12.0.0",
+
+    # HTTP client
+    "httpx>=0.26.0",
+
+    # Audio processing
+    "ffmpeg-python>=0.2.0",
+    "pydub>=0.25.1",
+
+    # Validation & settings
+    "pydantic>=2.5.0",
+    "pydantic-settings>=2.1.0",
+
+    # Provider SDKs
+    "google-generativeai>=0.3.0",
+    "openai>=1.10.0",
+    "elevenlabs>=1.0.0",
+    "assemblyai>=0.21.0",
+    "deepgram-sdk>=3.0.0",
+
+    # Utilities
+    "python-dotenv>=1.0.0",
+    "tenacity>=8.2.0",
+    "structlog>=24.1.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "pytest-cov>=4.1.0",
+    "httpx>=0.26.0",
+    "ruff>=0.1.0",
+    "mypy>=1.8.0",
+    "pre-commit>=3.6.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/stt_service"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true
