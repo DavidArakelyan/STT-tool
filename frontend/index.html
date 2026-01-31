@@ -13,16 +13,48 @@
     <div class="container">
         <!-- Header -->
         <header class="header">
-            <h1>🎙️ Speech to Text</h1>
-            <p class="subtitle">Multi-provider transcription service with Armenian language support</p>
+            <div class="header-left">
+                <h1>🎙️ Speech to Text</h1>
+                <p class="subtitle">Multi-provider transcription service</p>
+            </div>
+            <div class="header-right">
+                <div class="session-auth">
+                    <div class="input-with-toggle">
+                        <input type="password" id="apiKey" class="session-key-input" placeholder="Session Key"
+                            title="Enter API Key for this session" onchange="getApiKey()">
+                        <button class="toggle-password" onclick="togglePasswordVisibility('apiKey')"
+                            title="Toggle Visibility">
+                            <svg viewBox="0 0 24 24">
+                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                                <circle cx="12" cy="12" r="3"></circle>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <button class="btn btn-secondary btn-icon" onclick="openSettings()" title="Settings">⚙️</button>
+            </div>
         </header>
 
-        <!-- API Key Section -->
-        <div class="card api-key-section">
-            <label for="apiKey">API Key</label>
-            <div class="input-group">
-                <input type="password" id="apiKey" placeholder="Enter your API key" value="dev-test-key">
-                <button class="btn btn-secondary" onclick="toggleApiKeyVisibility()">👁️</button>
+        <!-- Settings Modal (Dynamic) -->
+        <div class="modal" id="settingsModal">
+            <div class="modal-content modal-large">
+                <div class="modal-header">
+                    <h2>⚙️ Configuration</h2>
+                    <button class="btn btn-icon" onclick="closeSettingsModal()">✕</button>
+                </div>
+                <div class="modal-body settings-body">
+                    <div class="settings-sidebar" id="settingsSidebar">
+                        <!-- Sections injected here -->
+                    </div>
+                    <div class="settings-content" id="settingsContent">
+                        <!-- Form fields injected here -->
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <div class="settings-status" id="settingsStatus"></div>
+                    <button class="btn btn-secondary" onclick="closeSettingsModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="saveSettings()">Save Changes</button>
+                </div>
             </div>
         </div>
 

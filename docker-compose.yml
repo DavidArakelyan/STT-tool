@@ -9,7 +9,7 @@ services:
     environment:
       - DEBUG=true
       - ENVIRONMENT=development
-      - API_KEYS=dev-test-key
+      # API_KEYS loaded from encoded .env file
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_USER=stt_user
@@ -27,6 +27,7 @@ services:
       - ./src:/app/src
       - ./frontend:/app/frontend
       - ./migrations:/app/migrations
+      - ./.env:/app/.env
       - logs:/app/logs
     depends_on:
       postgres:
@@ -65,6 +66,7 @@ services:
       - PROVIDER_HISPEECH_API_URL=${PROVIDER_HISPEECH_API_URL:-https://api.hispeech.ai}
     volumes:
       - ./src:/app/src
+      - ./.env:/app/.env
       - logs:/app/logs
     depends_on:
       postgres:

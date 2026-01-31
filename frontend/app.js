@@ -7,26 +7,26 @@ let currentTranscript = null;
 // ===== Initialize =====
 document.addEventListener('DOMContentLoaded', () => {
     initDropzone();
-    loadApiKey();
+    loadApiKey(); // Load from localStorage if present
     refreshJobs();
 
     // Update active job timers every second
     setInterval(updateLiveTimers, 1000);
 
     // Load saved settings (prompt)
-    loadSettings();
-    document.getElementById('transcriptionPrompt').addEventListener('input', saveSettings);
+    loadMemoizedPrompt();
+    document.getElementById('transcriptionPrompt').addEventListener('input', saveMemoizedPrompt);
 });
 
-// ===== Settings Persistence =====
-function loadSettings() {
+// ===== Settings Persistence (Prompt) =====
+function loadMemoizedPrompt() {
     const savedPrompt = localStorage.getItem('stt_prompt');
     if (savedPrompt !== null) {
         document.getElementById('transcriptionPrompt').value = savedPrompt;
     }
 }
 
-function saveSettings(e) {
+function saveMemoizedPrompt(e) {
     localStorage.setItem('stt_prompt', e.target.value);
 }
 
@@ -36,17 +36,202 @@ function loadApiKey() {
     if (saved) {
         document.getElementById('apiKey').value = saved;
     }
+    // No default value set here to prevent leaks
 }
 
 function getApiKey() {
     const key = document.getElementById('apiKey').value;
-    localStorage.setItem('stt_api_key', key);
+    // Only save if it's not empty, to avoid wiping good keys
+    if (key.trim()) {
+        localStorage.setItem('stt_api_key', key);
+    }
     return key;
 }
 
-function toggleApiKeyVisibility() {
-    const input = document.getElementById('apiKey');
-    input.type = input.type === 'password' ? 'text' : 'password';
+// ===== Settings Editor Logic =====
+let currentSettings = null;
+
+async function openSettings() {
+    const modal = document.getElementById('settingsModal');
+    const statusDiv = document.getElementById('settingsStatus');
+    statusDiv.textContent = 'Loading configuration...';
+    statusDiv.className = 'settings-status info';
+
+    modal.classList.add('open');
+
+    try {
+        const response = await fetch(`${API_BASE}/settings`, {
+            headers: { 'X-API-Key': getApiKey() }
+        });
+
+        if (response.status === 401) {
+            throw new Error('Unauthorized. Please enter a valid Session Key.');
+        }
+
+        if (!response.ok) throw new Error('Failed to load settings');
+
+        const config = await response.json();
+        currentSettings = config;
+        renderSettingsForm(config);
+        statusDiv.textContent = '';
+    } catch (error) {
+        statusDiv.textContent = `Error: ${error.message}`;
+        statusDiv.className = 'settings-status error';
+        document.getElementById('settingsContent').innerHTML = `
+            <div class="error-placeholder">
+                <p>⚠️ Could not load settings.</p>
+                <p>${error.message}</p>
+                ${error.message.includes('Unauthorized') ? '<p>Please check the Session Key in the top right.</p>' : ''}
+            </div>
+        `;
+    }
+}
+
+function closeSettingsModal() {
+    document.getElementById('settingsModal').classList.remove('open');
+    currentSettings = null;
+}
+
+function renderSettingsForm(config) {
+    const sidebar = document.getElementById('settingsSidebar');
+    const content = document.getElementById('settingsContent');
+
+    sidebar.innerHTML = '';
+    content.innerHTML = '';
+
+    // Create sections
+    config.sections.forEach((section, index) => {
+        // Sidebar Link
+        const link = document.createElement('div');
+        link.className = `settings-nav-item ${index === 0 ? 'active' : ''}`;
+        link.textContent = section.name;
+        link.onclick = () => switchSettingsTab(index);
+        sidebar.appendChild(link);
+
+        // Content Section
+        const sectionDiv = document.createElement('div');
+        sectionDiv.className = `settings-section ${index === 0 ? 'active' : ''}`;
+        sectionDiv.id = `settings-section-${index}`;
+
+        const title = document.createElement('h3');
+        title.textContent = section.name;
+        sectionDiv.appendChild(title);
+
+        const formGrid = document.createElement('div');
+        formGrid.className = 'settings-form-grid';
+
+        section.items.forEach(item => {
+            const group = document.createElement('div');
+            group.className = 'settings-field';
+
+            const label = document.createElement('label');
+            label.textContent = item.key;
+            label.title = item.comment || '';
+
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.value = item.value;
+            input.dataset.sectionIndex = index;
+            input.dataset.key = item.key;
+
+            // Mask potential secrets
+            if (item.key.includes('KEY') || item.key.includes('SECRET') || item.key.includes('PASSWORD')) {
+                input.type = 'password';
+
+                // Wrap in toggle group
+                const wrapper = document.createElement('div');
+                wrapper.className = 'input-with-toggle';
+
+                // Create unique ID for toggle targeting
+                const inputId = `setting-${index}-${item.key}`;
+                input.id = inputId;
+
+                const toggleBtn = document.createElement('button');
+                toggleBtn.className = 'toggle-password';
+                toggleBtn.innerHTML = `<svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`;
+                toggleBtn.onclick = () => togglePasswordVisibility(inputId);
+                toggleBtn.title = "Toggle Visibility";
+
+                wrapper.appendChild(input);
+                wrapper.appendChild(toggleBtn);
+                group.appendChild(label);
+                group.appendChild(wrapper);
+            } else {
+                group.appendChild(label);
+                group.appendChild(input);
+            }
+
+            if (item.comment) {
+                const hint = document.createElement('span');
+                hint.className = 'field-hint';
+                hint.textContent = item.comment;
+                group.appendChild(hint);
+            }
+
+            group.appendChild(label);
+            group.appendChild(input);
+            formGrid.appendChild(group);
+        });
+
+        sectionDiv.appendChild(formGrid);
+        content.appendChild(sectionDiv);
+    });
+}
+
+function switchSettingsTab(index) {
+    document.querySelectorAll('.settings-nav-item').forEach((el, i) => {
+        el.classList.toggle('active', i === index);
+    });
+    document.querySelectorAll('.settings-section').forEach((el, i) => {
+        el.classList.toggle('active', i === index);
+    });
+}
+
+async function saveSettings() {
+    if (!currentSettings) return;
+
+    const statusDiv = document.getElementById('settingsStatus');
+    statusDiv.textContent = 'Saving...';
+    statusDiv.className = 'settings-status info';
+
+    // Collect values from inputs
+    document.querySelectorAll('.settings-field input').forEach(input => {
+        const sIndex = parseInt(input.dataset.sectionIndex);
+        const key = input.dataset.key;
+
+        // Find item in currentSettings object
+        const section = currentSettings.sections[sIndex];
+        const item = section.items.find(i => i.key === key);
+        if (item) {
+            item.value = input.value;
+        }
+    });
+
+    try {
+        const response = await fetch(`${API_BASE}/settings`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': getApiKey()
+            },
+            body: JSON.stringify(currentSettings)
+        });
+
+        if (!response.ok) throw new Error('Failed to save settings');
+
+        const result = await response.json();
+        showToast('Configuration saved successfully', 'success');
+        statusDiv.textContent = 'Saved!';
+        statusDiv.className = 'settings-status success';
+
+        setTimeout(() => closeSettingsModal(), 1000);
+
+        // If API Key changed, might need to update session?
+        // For now, let user manage that manually via the Session Key input.
+    } catch (error) {
+        statusDiv.textContent = `Error: ${error.message}`;
+        statusDiv.className = 'settings-status error';
+    }
 }
 
 // ===== File Upload =====
@@ -233,14 +418,19 @@ function renderJobCard(job) {
     const isActive = ['pending', 'uploaded', 'processing'].includes(job.status);
 
     // Calculate elapsed time for active jobs
-    const createdAt = new Date(job.created_at);
-    const now = new Date();
-    const elapsedMs = now - createdAt;
-    const elapsedMinutes = Math.floor(elapsedMs / 60000);
-    const elapsedSeconds = Math.floor((elapsedMs % 60000) / 1000);
-    const elapsedStr = elapsedMinutes > 0
-        ? `${elapsedMinutes}m ${elapsedSeconds}s`
-        : `${elapsedSeconds}s`;
+    let elapsedStr = '--';
+    if (job.created_at) {
+        const createdAt = new Date(job.created_at);
+        if (!isNaN(createdAt.getTime())) {
+            const now = new Date();
+            const elapsedMs = now - createdAt;
+            const elapsedMinutes = Math.floor(elapsedMs / 60000);
+            const elapsedSeconds = Math.floor((elapsedMs % 60000) / 1000);
+            elapsedStr = elapsedMinutes > 0
+                ? `${elapsedMinutes}m ${elapsedSeconds}s`
+                : `${elapsedSeconds}s`;
+        }
+    }
 
     return `
         <div class="job-card ${isActive ? 'job-active' : ''}" id="job-${job.job_id}" data-created-at="${job.created_at}">
@@ -416,8 +606,10 @@ function updateLiveTimers() {
         if (!createdAt) return;
 
         const createdDate = new Date(createdAt);
+        if (isNaN(createdDate.getTime())) return; // Guard against invalid date
+
         const now = new Date();
-        const elapsedMs = now - createdAt;
+        const elapsedMs = now - createdDate;
 
         const elapsedMinutes = Math.floor(elapsedMs / 60000);
         const elapsedSeconds = Math.floor((elapsedMs % 60000) / 1000);
@@ -719,9 +911,19 @@ function downloadTranscript() {
     const text = currentTranscript.transcript.full_text;
     if (!text) {
         showToast('Transcript is empty', 'warning');
+        return; // Early return if empty
     }
 
-    const filename = getDownloadFilename(currentTranscript);
+    // Generate filename with guaranteed .txt extension
+    let filename = 'transcript.txt';
+    if (currentTranscript.original_filename) {
+        const baseName = currentTranscript.original_filename.split('.').slice(0, -1).join('.') || currentTranscript.original_filename;
+        filename = `${baseName}_transcript.txt`;
+    } else if (currentTranscript.job_id) {
+        filename = `transcript_${currentTranscript.job_id.slice(0, 8)}.txt`;
+    }
+
+    console.log('[downloadTranscript] Downloading with filename:', filename);
     downloadTextFile(text, filename);
     showToast('Transcript downloaded', 'success');
 }
@@ -743,30 +945,27 @@ async function downloadPartial(jobId) {
 }
 
 function downloadTextFile(content, filename) {
-    // Create blob with BOM for proper UTF-8 encoding (especially for Armenian text)
+    console.log('[downloadTextFile] Starting download with filename:', filename);
+
+    // Create content with BOM for UTF-8 encoding
     const BOM = '\uFEFF';
-    const blob = new Blob([BOM + content], { type: 'text/plain;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
+    const fullContent = BOM + content;
 
-    // Create and configure the download link
+    // Use data URL approach (more compatible with Chrome for filename preservation)
+    const dataUrl = 'data:text/plain;charset=utf-8,' + encodeURIComponent(fullContent);
+
     const a = document.createElement('a');
-    a.style.display = 'none';
-    a.href = url;
+    a.href = dataUrl;
     a.download = filename;
-    a.setAttribute('download', filename); // Explicit download attribute
+    a.style.display = 'none';
 
-    // Append to body and trigger click
     document.body.appendChild(a);
+    console.log('[downloadTextFile] Link download attr:', a.download, 'href type:', a.href.substring(0, 30));
+    a.click();
 
-    // Use setTimeout for better browser compatibility
     setTimeout(() => {
-        a.click();
-        // Cleanup after a delay to ensure download starts
-        setTimeout(() => {
-            document.body.removeChild(a);
-            URL.revokeObjectURL(url);
-        }, 100);
-    }, 0);
+        document.body.removeChild(a);
+    }, 100);
 }
 
 // ===== Logs Modal =====
@@ -1079,3 +1278,15 @@ document.getElementById('resultModal').addEventListener('click', (e) => {
         closeModal();
     }
 });
+
+// ===== UI Helpers =====
+function togglePasswordVisibility(inputId) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+
+    const isPassword = input.type === 'password';
+    input.type = isPassword ? 'text' : 'password';
+
+    // Optional: Update icon style if needed
+}
+

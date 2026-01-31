@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from stt_service.api.routes import health, jobs, transcription
+from stt_service.api.routes import health, jobs, transcription, settings as settings_api
 from stt_service.config import get_settings
 from stt_service.db.session import close_db, init_db
 from stt_service.services.storage import storage_service
@@ -152,6 +152,10 @@ def create_app() -> FastAPI:
     )
     app.include_router(
         jobs.router,
+        prefix=settings.api_prefix,
+    )
+    app.include_router(
+        settings_api.router,
         prefix=settings.api_prefix,
     )
 
