@@ -114,9 +114,13 @@ async function submitTranscription() {
     const formData = new FormData();
     formData.append('audio', selectedFile);
 
+    const language = document.getElementById('language').value;
+    const prompt = document.getElementById('transcriptionPrompt').value.trim();
+
     const config = {
         provider: document.getElementById('provider').value,
-        language: document.getElementById('language').value
+        language: language,
+        context: prompt ? { prompt: prompt } : undefined
     };
     formData.append('config', JSON.stringify(config));
 

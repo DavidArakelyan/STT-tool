@@ -71,11 +71,18 @@
                 <div class="form-group">
                     <label for="language">Language</label>
                     <select id="language">
+                        <option value="auto" selected>Auto (Detect)</option>
                         <option value="hy">Armenian (hy)</option>
                         <option value="en">English (en)</option>
                         <option value="ru">Russian (ru)</option>
                     </select>
                 </div>
+            </div>
+
+            <div class="form-group" style="margin-top: 1rem;">
+                <label for="transcriptionPrompt">Transcription Prompt (Optional)</label>
+                <textarea id="transcriptionPrompt" class="form-input" rows="2"
+                    placeholder="Provide context, specific terms, or style instructions to guide the AI..."></textarea>
             </div>
 
             <button class="btn btn-primary btn-large" id="submitBtn" onclick="submitTranscription()" disabled>

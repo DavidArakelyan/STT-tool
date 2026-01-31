@@ -130,8 +130,13 @@ class GeminiProvider(BaseSTTProvider):
         """Build Gemini prompt for transcription."""
         prompt_parts = [
             "Transcribe the following audio accurately.",
-            f"Primary language: {self._get_language_name(config.language)}.",
+            "Transcribe the following audio accurately.",
         ]
+
+        if config.language and config.language.lower() != "auto":
+             prompt_parts.append(f"Primary language: {self._get_language_name(config.language)}.")
+        else:
+             prompt_parts.append("Detect the primary language and transcribe.")
 
         if config.additional_languages:
             langs = ", ".join(self._get_language_name(l) for l in config.additional_languages)
@@ -179,6 +184,15 @@ Output format (JSON):
             "fr": "French",
             "de": "German",
             "es": "Spanish",
+        }
+        names = {
+            "hy": "Armenian",
+            "en": "English",
+            "ru": "Russian",
+            "fr": "French",
+            "de": "German",
+            "es": "Spanish",
+            "auto": "Auto Detect",
         }
         return names.get(code, code)
 
