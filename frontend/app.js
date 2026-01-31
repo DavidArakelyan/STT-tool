@@ -12,7 +12,23 @@ document.addEventListener('DOMContentLoaded', () => {
 
     // Update active job timers every second
     setInterval(updateLiveTimers, 1000);
+
+    // Load saved settings (prompt)
+    loadSettings();
+    document.getElementById('transcriptionPrompt').addEventListener('input', saveSettings);
 });
+
+// ===== Settings Persistence =====
+function loadSettings() {
+    const savedPrompt = localStorage.getItem('stt_prompt');
+    if (savedPrompt !== null) {
+        document.getElementById('transcriptionPrompt').value = savedPrompt;
+    }
+}
+
+function saveSettings(e) {
+    localStorage.setItem('stt_prompt', e.target.value);
+}
 
 // ===== API Key Management =====
 function loadApiKey() {
@@ -140,7 +156,8 @@ async function submitTranscription() {
 
         const data = await response.json();
         showToast(`Job submitted: ${data.job_id.slice(0, 8)}...`, 'success');
-        clearFile();
+        // Do NOT clear file - let them use it again
+        // clearFile(); 
         refreshJobs();
         startPolling(data.job_id);
     } catch (error) {
@@ -283,7 +300,7 @@ function renderJobCard(job) {
                 <button class="btn btn-secondary" onclick="viewLogs('${job.job_id}')">📋 Logs</button>
                 ${showProgress ? `<button class="btn btn-secondary" onclick="toggleChunks('${job.job_id}')">📊 Show Chunks</button>` : ''}
                 ${showResult ? `<button class="btn btn-success" onclick="viewResult('${job.job_id}')">📄 View Result</button>` : ''}
-                ${showResult ? `<button class="btn btn-secondary" onclick="downloadResult('${job.job_id}')">⬇️ Download</button>` : ''}
+                ${showResult ? `<button class="btn btn-primary" onclick="downloadBundle('${job.job_id}')">⬇️ Download</button>` : ''}
                 ${showDownloadPartial ? `<button class="btn btn-secondary" onclick="downloadPartial('${job.job_id}')">⬇️ Download Partial</button>` : ''}
                 ${showRetry ? `<button class="btn btn-primary" onclick="retryJob('${job.job_id}')">🔄 Retry</button>` : ''}
                 ${showCancel ? `<button class="btn btn-secondary" onclick="cancelJob('${job.job_id}')">⏹️ Cancel</button>` : ''}
@@ -400,7 +417,7 @@ function updateLiveTimers() {
 
         const createdDate = new Date(createdAt);
         const now = new Date();
-        const elapsedMs = now - createdDate;
+        const elapsedMs = now - createdAt;
 
         const elapsedMinutes = Math.floor(elapsedMs / 60000);
         const elapsedSeconds = Math.floor((elapsedMs % 60000) / 1000);
@@ -551,6 +568,52 @@ function closeDeleteModal() {
 function confirmDelete() {
     if (pendingDeleteJobId) {
         deleteJob(pendingDeleteJobId);
+    }
+}
+
+// Download bundle (Audio + Transcript)
+async function downloadBundle(jobId) {
+    try {
+        showToast('Preparing download...', 'info');
+
+        const response = await fetch(`${API_BASE}/jobs/${jobId}/download-bundle`, {
+            headers: { 'X-API-Key': getApiKey() }
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to fetch download bundle');
+        }
+
+        // Get filename from header or fallback
+        let filename = `bundle_${jobId.slice(0, 8)}.zip`;
+        const contentDisposition = response.headers.get('Content-Disposition');
+        if (contentDisposition) {
+            const match = contentDisposition.match(/filename=(.+)/i);
+            if (match && match[1]) {
+                filename = match[1].replace(/['"]/g, '');
+            }
+        }
+
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+
+        setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }, 100);
+
+        showToast('Download started', 'success');
+    } catch (error) {
+        console.error(error);
+        showToast(error.message || 'Download failed', 'error');
     }
 }
 

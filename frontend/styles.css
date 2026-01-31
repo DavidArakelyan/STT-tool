@@ -118,6 +118,13 @@ textarea {
     transition: border-color 0.2s, box-shadow 0.2s;
 }
 
+textarea {
+    resize: vertical;
+    min-height: 150px;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
 input:focus,
 select:focus,
 textarea:focus {
@@ -235,7 +242,7 @@ select {
 .dropzone {
     border: 2px dashed var(--border-color);
     border-radius: var(--radius-md);
-    padding: 3rem;
+    padding: 1.5rem;
     text-align: center;
     cursor: pointer;
     transition: all 0.2s;

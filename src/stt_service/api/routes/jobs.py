@@ -1,6 +1,10 @@
 """Jobs API endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
+import io
+import zipfile
+import json
 
 from stt_service.api.dependencies import (
     APIKey,
@@ -289,6 +293,58 @@ async def get_job_result(
         processing_time_seconds=processing_time,
         chunks_processed=job.completed_chunks,
         warnings=result.get("warnings", []),
+    )
+
+
+
+@router.get("/{job_id}/download-bundle")
+async def download_bundle(
+    job_id: str,
+    job_repo: JobRepo,
+    storage: Storage,
+    _api_key: APIKey,
+) -> StreamingResponse:
+    """Download a ZIP bundle containing the source audio and transcript."""
+    job = await job_repo.get_by_id(job_id)
+
+    if job.status != DBJobStatus.COMPLETED or not job.result:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Job not ready. Status: {job.status.value}",
+        )
+
+    # 1. Get Audio File
+    if not job.s3_original_key:
+        raise HTTPException(status_code=404, detail="Audio file not found in storage record")
+    
+    try:
+        audio_bytes = await storage.download_file(job.s3_original_key)
+    except Exception as e:
+         raise HTTPException(status_code=500, detail=f"Failed to retrieve audio: {e}")
+
+    # 2. Get Transcript Text
+    transcript_text = job.result.get("full_text", "")
+    if not transcript_text:
+        # Fallback to segments if full_text missing
+        segments = job.result.get("segments", [])
+        transcript_text = "\n".join([s.get("text", "") for s in segments])
+
+    # 3. Create ZIP in memory
+    zip_buffer = io.BytesIO()
+    base_name = job.original_filename.rsplit(".", 1)[0] if job.original_filename else job_id
+
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+        # Add Audio
+        zip_file.writestr(job.original_filename, audio_bytes)
+        # Add Transcript (BOM for Excel/Windows compatibility)
+        zip_file.writestr(f"{base_name}_transcript.txt", '\uFEFF' + transcript_text)
+
+    zip_buffer.seek(0)
+
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={base_name}_bundle.zip"},
     )
 
 
