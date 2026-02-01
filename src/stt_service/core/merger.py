@@ -223,18 +223,57 @@ class TranscriptMerger:
         return result
 
     def _texts_similar(self, text1: str, text2: str, threshold: float = 0.7) -> bool:
-        """Check if two texts are similar (for deduplication)."""
-        # Simple word overlap check
-        words1 = set(text1.lower().split())
-        words2 = set(text2.lower().split())
-
-        if not words1 or not words2:
+        """Check if two texts are similar (for deduplication).
+        
+        Uses word overlap for space-separated languages, and falls back to
+        character-level comparison for Armenian and other scripts.
+        """
+        if not text1 or not text2:
             return False
+            
+        text1_lower = text1.lower().strip()
+        text2_lower = text2.lower().strip()
+        
+        # Exact match
+        if text1_lower == text2_lower:
+            return True
+        
+        # Check if one is a substring of the other (common in overlaps)
+        if text1_lower in text2_lower or text2_lower in text1_lower:
+            shorter = min(len(text1_lower), len(text2_lower))
+            longer = max(len(text1_lower), len(text2_lower))
+            if shorter / longer >= threshold:
+                return True
+        
+        # Word-level overlap (works for English, Russian)
+        words1 = set(text1_lower.split())
+        words2 = set(text2_lower.split())
 
-        intersection = len(words1 & words2)
-        union = len(words1 | words2)
-
-        return (intersection / union) >= threshold if union > 0 else False
+        if words1 and words2:
+            intersection = len(words1 & words2)
+            union = len(words1 | words2)
+            if union > 0 and (intersection / union) >= threshold:
+                return True
+        
+        # Character-level overlap (better for Armenian and concatenated text)
+        # Use character trigram comparison
+        def get_trigrams(text: str) -> set:
+            """Get set of character trigrams from text."""
+            text = text.replace(" ", "")  # Remove spaces
+            if len(text) < 3:
+                return {text} if text else set()
+            return {text[i:i+3] for i in range(len(text) - 2)}
+        
+        trigrams1 = get_trigrams(text1_lower)
+        trigrams2 = get_trigrams(text2_lower)
+        
+        if trigrams1 and trigrams2:
+            intersection = len(trigrams1 & trigrams2)
+            union = len(trigrams1 | trigrams2)
+            if union > 0 and (intersection / union) >= threshold:
+                return True
+        
+        return False
 
     def _normalize_speakers(
         self,

@@ -130,8 +130,19 @@ class GeminiProvider(BaseSTTProvider):
         """Build Gemini prompt for transcription."""
         prompt_parts = [
             "Transcribe the following audio accurately.",
-            "Transcribe the following audio accurately.",
         ]
+
+        # Add context from previous chunks for better continuity
+        if config.previous_transcript_context and config.chunk_index > 0:
+            prompt_parts.append(
+                f"\n**IMPORTANT - This is a CONTINUATION of a longer recording (chunk {config.chunk_index + 1}).** "
+                f"The conversation was already in progress. Here is the recent transcript for context:\n"
+                f"---\n{config.previous_transcript_context}\n---\n"
+                f"Continue transcribing from where this left off. Maintain speaker consistency with the context above."
+            )
+            if config.previous_speakers:
+                speakers_str = ", ".join(config.previous_speakers)
+                prompt_parts.append(f"Known speakers from previous context: {speakers_str}. Reuse these IDs for the same voices.")
 
         if config.language and config.language.lower() != "auto":
              prompt_parts.append(f"Primary language: {self._get_language_name(config.language)}.")

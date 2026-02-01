@@ -18,6 +18,11 @@ class TranscriptionConfig:
     custom_vocabulary: list[str] = field(default_factory=list)
     domain: str | None = None
 
+    # Context injection for multi-chunk processing
+    previous_transcript_context: str | None = None  # Last N segments as text
+    previous_speakers: list[str] = field(default_factory=list)  # Known speaker IDs
+    chunk_index: int = 0  # Current chunk index (0 for first/single chunk)
+
     # Diarization
     diarization_enabled: bool = True
     min_speakers: int | None = None

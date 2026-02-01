@@ -122,8 +122,12 @@ class ChunkingSettings(BaseSettings):
     # Maximum chunk duration in seconds
     max_chunk_duration: int = 600  # 10 minutes
 
-    # Overlap between chunks to avoid cutting words
-    overlap_duration: float = 3.0  # 3 seconds
+    # Overlap settings for context-aware stitching
+    overlap_enabled: bool = True  # Enable overlapping chunks for better stitching
+    overlap_duration: float = 3.0  # 3 seconds overlap between chunks
+
+    # Context injection settings
+    context_segments: int = 3  # Number of previous segments to pass as context
 
     # Silence detection for smart splitting
     min_silence_duration: float = 0.5  # seconds

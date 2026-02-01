@@ -201,8 +201,11 @@ class AudioChunker:
 
             boundaries.append((current_start, split_point))
 
-            # Next chunk starts with overlap
-            current_start = max(0, split_point - self.overlap_duration)
+            # Next chunk starts with overlap (if enabled)
+            if settings.chunking.overlap_enabled:
+                current_start = max(0, split_point - self.overlap_duration)
+            else:
+                current_start = split_point
 
         return boundaries
 

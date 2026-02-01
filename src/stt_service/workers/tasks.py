@@ -141,7 +141,7 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
 
                 # Process chunks
                 provider = get_provider(provider_name)
-                transcription_config = _build_transcription_config(config)
+                base_config = _build_transcription_config(config)
                 results = []
 
                 for chunk in chunks:
@@ -156,6 +156,38 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                         await chunk_repo.mark_processing(chunk_record.id)
                         await session.commit()  # Commit to show "processing" status
 
+                    # Build chunk-specific config with context from previous chunks
+                    context_text, known_speakers = _extract_context_from_results(
+                        results,
+                        num_segments=settings.chunking.context_segments,
+                    )
+
+                    # Create config with context for this chunk
+                    chunk_config = TranscriptionConfig(
+                        language=base_config.language,
+                        additional_languages=base_config.additional_languages,
+                        prompt=base_config.prompt,
+                        custom_vocabulary=base_config.custom_vocabulary,
+                        domain=base_config.domain,
+                        previous_transcript_context=context_text if chunk.index > 0 else None,
+                        previous_speakers=known_speakers if chunk.index > 0 else [],
+                        chunk_index=chunk.index,
+                        diarization_enabled=base_config.diarization_enabled,
+                        min_speakers=base_config.min_speakers,
+                        max_speakers=base_config.max_speakers,
+                        include_timestamps=base_config.include_timestamps,
+                        timestamp_granularity=base_config.timestamp_granularity,
+                        include_confidence=base_config.include_confidence,
+                    )
+
+                    if chunk.index > 0 and context_text:
+                        logger.info(
+                            "Passing context to chunk",
+                            chunk_index=chunk.index,
+                            context_length=len(context_text),
+                            known_speakers=known_speakers,
+                        )
+
                     # Transcribe chunk
                     try:
                         # Define retry callback to check for cancellation
@@ -169,7 +201,7 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                         result = await _process_single_chunk(
                             provider,
                             chunk,
-                            transcription_config,
+                            chunk_config,
                             provider_name,
                             on_retry=on_retry_check,
                         )
@@ -295,6 +327,51 @@ def _build_transcription_config(config: dict | None) -> TranscriptionConfig:
         timestamp_granularity=output.get("timestamp_granularity", "segment"),
         include_confidence=output.get("include_confidence", False),
     )
+
+
+def _extract_context_from_results(
+    results: list[dict],
+    num_segments: int = 3,
+) -> tuple[str, list[str]]:
+    """Extract context from previous chunk results for continuity.
+
+    Args:
+        results: List of previous chunk results
+        num_segments: Number of segments to include in context
+
+    Returns:
+        Tuple of (context_text, speaker_ids)
+    """
+    if not results:
+        return "", []
+
+    # Collect all segments from all results
+    all_segments = []
+    all_speakers = set()
+
+    for result in results:
+        segments = result.get("segments", [])
+        for seg in segments:
+            all_segments.append(seg)
+            speaker = seg.get("speaker_id") or seg.get("speaker")
+            if speaker:
+                all_speakers.add(speaker)
+
+    if not all_segments:
+        return "", list(all_speakers)
+
+    # Take last N segments for context
+    context_segments = all_segments[-num_segments:]
+
+    # Build context text
+    context_lines = []
+    for seg in context_segments:
+        speaker = seg.get("speaker_id") or seg.get("speaker", "SPEAKER_00")
+        text = seg.get("text", "").strip()
+        if text:
+            context_lines.append(f"{speaker}: {text}")
+
+    return "\n".join(context_lines), list(all_speakers)
 
 
 @celery_app.task(bind=True, max_retries=3)
