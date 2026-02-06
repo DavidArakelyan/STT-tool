@@ -92,6 +92,7 @@ class ProviderSettings(BaseSettings):
     gemini_rpm_limit: int = 60  # requests per minute
     gemini_max_output_tokens: int = 16384  # Configurable token limit (increased from 8192)
     gemini_request_timeout: int = 180  # API timeout in seconds
+    gemini_temperature: float = 1.0  # Temperature for generation (Gemini 3 optimized for 1.0)
 
     # ElevenLabs
     elevenlabs_api_key: str = ""

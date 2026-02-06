@@ -64,10 +64,48 @@ class GeminiProvider(BaseSTTProvider):
             }
 
             # Generate transcription
+            # Gemini 3 is optimized for temperature=1.0 (default)
             generation_config = genai.GenerationConfig(
-                temperature=0.1,
+                temperature=settings.providers.gemini_temperature,
                 max_output_tokens=settings.providers.gemini_max_output_tokens,
                 response_mime_type="application/json",
+                # JSON schema for structured output validation
+                response_schema={
+                    "type": "object",
+                    "properties": {
+                        "segments": {
+                            "type": "array",
+                            "description": "Array of transcribed segments with speaker identification and timestamps",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "speaker": {
+                                        "type": "string",
+                                        "description": "Speaker identifier (e.g., SPEAKER_00, SPEAKER_01)"
+                                    },
+                                    "start": {
+                                        "type": "number",
+                                        "description": "Segment start time in seconds"
+                                    },
+                                    "end": {
+                                        "type": "number",
+                                        "description": "Segment end time in seconds"
+                                    },
+                                    "text": {
+                                        "type": "string",
+                                        "description": "Transcribed text for this segment"
+                                    }
+                                },
+                                "required": ["speaker", "start", "end", "text"]
+                            }
+                        },
+                        "full_text": {
+                            "type": "string",
+                            "description": "Complete transcription without speaker labels or timestamps"
+                        }
+                    },
+                    "required": ["segments", "full_text"]
+                }
             )
 
             response = await self.model.generate_content_async(
