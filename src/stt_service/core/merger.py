@@ -371,24 +371,38 @@ class TranscriptMerger:
         ]
 
     def _build_full_text(self, segments: list[MergedSegment]) -> str:
-        """Build full text from segments, merging speaker turns."""
+        """Build full text from segments with speaker labels.
+
+        Format: SPEAKER_00: Some text\nSPEAKER_01: Other text\n
+        """
         if not segments:
             return ""
 
-        parts = []
+        lines = []
         current_speaker = None
+        current_text_parts = []
 
         for seg in segments:
             if seg.speaker_id != current_speaker:
-                if parts:
-                    parts.append("\n")
+                # Save previous speaker's line if exists
+                if current_speaker is not None and current_text_parts:
+                    line_text = "".join(current_text_parts).strip()
+                    lines.append(f"{current_speaker}: {line_text}")
+                    current_text_parts = []
+
                 current_speaker = seg.speaker_id
 
-            parts.append(seg.text)
-            if not seg.text.endswith((".", "!", "?", ",")):
-                parts.append(" ")
+            # Add text to current speaker's parts
+            current_text_parts.append(seg.text)
+            if not seg.text.endswith((".", "!", "?", ",", "։")):
+                current_text_parts.append(" ")
 
-        return "".join(parts).strip()
+        # Add final speaker's line
+        if current_speaker is not None and current_text_parts:
+            line_text = "".join(current_text_parts).strip()
+            lines.append(f"{current_speaker}: {line_text}")
+
+        return "\n".join(lines)
 
     def _compute_speaker_stats(
         self,

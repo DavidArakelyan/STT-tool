@@ -305,6 +305,8 @@ async def download_bundle(
     _api_key: APIKey,
 ) -> StreamingResponse:
     """Download a ZIP bundle containing the source audio and transcript."""
+    from pathlib import Path
+
     job = await job_repo.get_by_id(job_id)
 
     if job.status != DBJobStatus.COMPLETED or not job.result:
@@ -316,7 +318,7 @@ async def download_bundle(
     # 1. Get Audio File
     if not job.s3_original_key:
         raise HTTPException(status_code=404, detail="Audio file not found in storage record")
-    
+
     try:
         audio_bytes = await storage.download_file(job.s3_original_key)
     except Exception as e:
@@ -329,7 +331,20 @@ async def download_bundle(
         segments = job.result.get("segments", [])
         transcript_text = "\n".join([s.get("text", "") for s in segments])
 
-    # 3. Create ZIP in memory
+    # 3. Get combined_transcript.json if exists
+    combined_json_path = Path(f"logs/jobs/{job_id}/combined_transcript.json")
+    combined_json_content = None
+    if combined_json_path.exists():
+        try:
+            with open(combined_json_path, "r", encoding="utf-8") as f:
+                combined_json_content = f.read()
+        except Exception as e:
+            # Log but don't fail the entire download
+            import structlog
+            logger = structlog.get_logger()
+            logger.warning("Failed to read combined_transcript.json", job_id=job_id, error=str(e))
+
+    # 4. Create ZIP in memory
     zip_buffer = io.BytesIO()
     base_name = job.original_filename.rsplit(".", 1)[0] if job.original_filename else job_id
 
@@ -338,6 +353,9 @@ async def download_bundle(
         zip_file.writestr(job.original_filename, audio_bytes)
         # Add Transcript (BOM for Excel/Windows compatibility)
         zip_file.writestr(f"{base_name}_transcript.txt", '\uFEFF' + transcript_text)
+        # Add combined_transcript.json if available
+        if combined_json_content:
+            zip_file.writestr(f"{base_name}_combined_transcript.json", combined_json_content)
 
     zip_buffer.seek(0)
 

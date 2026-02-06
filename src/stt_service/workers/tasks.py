@@ -21,7 +21,7 @@ from stt_service.providers import TranscriptionConfig, get_provider
 from stt_service.services.rate_limiter import setup_default_limits
 from stt_service.services.storage import storage_service
 from stt_service.workers.celery_app import celery_app
-from stt_service.utils.exceptions import JobCancelledError, JobNotFoundError
+from stt_service.utils.exceptions import JobCancelledError, JobNotFoundError, ProviderError
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -295,6 +295,11 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
             logger.error("Transcription job failed", job_id=job_id, error=str(e))
             await job_repo.update_status(job_id, JobStatus.FAILED, error_message=str(e))
 
+            # Check for non-retryable errors
+            if isinstance(e, ProviderError) and not e.retryable:
+                logger.error("Non-retryable error encountered, failing job immediately", job_id=job_id, error=str(e))
+                return {"job_id": job_id, "status": "failed", "error": str(e), "retryable": False}
+
             # Retry if possible
             if task.request.retries < task.max_retries:
                 raise task.retry(exc=e, countdown=60 * (task.request.retries + 1))
@@ -520,6 +525,14 @@ async def _process_chunk(task, job_id: str, chunk_index: int) -> dict[str, Any]:
 
             if chunk:
                 await chunk_repo.update_status(chunk.id, ChunkStatus.FAILED, error=str(e))
+
+            # Check for non-retryable errors
+            if isinstance(e, ProviderError) and not e.retryable:
+                 logger.error("Non-retryable error encountered, failing chunk immediately", job_id=job_id, chunk_index=chunk_index, error=str(e))
+                 # We do NOT raise retry here. We raise the exception to propagate failure or just return failed status
+                 # If we raise, the caller (if task chain) handles it.
+                 # Given this is a task, raising without retry marks task as FAILED.
+                 raise e
 
             if task.request.retries < task.max_retries:
                 raise task.retry(exc=e, countdown=30 * (task.request.retries + 1))
