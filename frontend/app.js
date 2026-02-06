@@ -458,7 +458,9 @@ function renderJobCard(job) {
                     ${job.status === 'processing' ? `
                         <span class="processing-info">
                             ${job.total_chunks > 0
-                    ? `Processing chunk ${job.completed_chunks + 1} of ${job.total_chunks}...`
+                    ? (job.completed_chunks >= job.total_chunks
+                        ? 'Finalizing and merging transcript...'
+                        : `Processing chunk ${job.completed_chunks + 1} of ${job.total_chunks}...`)
                     : `Processing audio chunks with ${job.provider || 'provider'}...`}
                         </span>` : ''}
                     ${job.status === 'pending' ? `<span class="processing-info">Waiting in queue...</span>` : ''}
@@ -564,7 +566,9 @@ function updateJobCard(jobId, progress) {
     if (infoSpan) {
         if (progress.status === 'processing') {
             infoSpan.textContent = progress.total_chunks > 0
-                ? `Processing chunk ${progress.completed_chunks + 1} of ${progress.total_chunks}...`
+                ? (progress.completed_chunks >= progress.total_chunks
+                    ? 'Finalizing and merging transcript...'
+                    : `Processing chunk ${progress.completed_chunks + 1} of ${progress.total_chunks}...`)
                 : `Processing audio chunks...`;
         } else if (progress.status === 'uploaded') {
             infoSpan.textContent = 'Splitting audio into chunks...';

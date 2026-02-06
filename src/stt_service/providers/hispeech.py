@@ -129,6 +129,9 @@ class HiSpeechProvider(BaseSTTProvider):
 
         Note: Adjust field names based on actual HiSpeech API response format.
         """
+        # Debug log raw response
+        logger.info("HiSpeech raw response", result=result)
+        
         segments = []
 
         # Try different common response formats

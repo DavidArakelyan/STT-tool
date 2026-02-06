@@ -88,8 +88,10 @@ class ProviderSettings(BaseSettings):
 
     # Google Gemini
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-2.0-flash-exp"
+    gemini_model: str = "gemini-3-flash"
     gemini_rpm_limit: int = 60  # requests per minute
+    gemini_max_output_tokens: int = 16384  # Configurable token limit (increased from 8192)
+    gemini_request_timeout: int = 180  # API timeout in seconds
 
     # ElevenLabs
     elevenlabs_api_key: str = ""
@@ -125,6 +127,7 @@ class ChunkingSettings(BaseSettings):
     # Overlap settings for context-aware stitching
     overlap_enabled: bool = True  # Enable overlapping chunks for better stitching
     overlap_duration: float = 3.0  # 3 seconds overlap between chunks
+    overlap_similarity_threshold: float = 0.8  # Similarity threshold for deduplication (increased from 0.7)
 
     # Context injection settings
     context_segments: int = 3  # Number of previous segments to pass as context

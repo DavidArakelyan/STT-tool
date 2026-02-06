@@ -16,11 +16,12 @@ from stt_service.db.models import ChunkStatus, JobStatus
 from stt_service.db.repositories.chunk import ChunkRepository
 from stt_service.db.repositories.job import JobRepository
 from stt_service.db.session import get_db_context
-from stt_service.utils.exceptions import JobCancelledError, JobNotFoundError
+from stt_service.utils.logging_config import job_logging_context
 from stt_service.providers import TranscriptionConfig, get_provider
 from stt_service.services.rate_limiter import setup_default_limits
 from stt_service.services.storage import storage_service
 from stt_service.workers.celery_app import celery_app
+from stt_service.utils.exceptions import JobCancelledError, JobNotFoundError
 
 logger = structlog.get_logger()
 settings = get_settings()
@@ -62,9 +63,13 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
     # Bind job_id to all logs in this task context
     structlog.contextvars.bind_contextvars(job_id=job_id)
 
-    async with get_db_context() as session:
-        job_repo = JobRepository(session)
-        chunk_repo = ChunkRepository(session)
+    # Use separate log file for this job
+    with job_logging_context(job_id):
+        logger.info("="*50 + "\n>>> STAGE: WORKER STARTED (Received from Redis) <<<\n" + "="*50)
+
+        async with get_db_context() as session:
+            job_repo = JobRepository(session)
+            chunk_repo = ChunkRepository(session)
 
         try:
             # Get job
@@ -106,6 +111,7 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                 )
 
                 # Check if we need chunking
+                logger.info("="*50 + "\n>>> STAGE: AUDIO CHUNKER <<<\n" + "="*50)
                 chunker = AudioChunker()
                 metadata = await chunker.get_audio_metadata(audio_path)
 
@@ -140,6 +146,7 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                     await session.commit()  # Commit to make chunks visible in UI
 
                 # Process chunks
+                logger.info("="*50 + f"\n>>> STAGE: PROVIDER PROCESSING ({provider_name.upper()}) <<<\n" + "="*50)
                 provider = get_provider(provider_name)
                 base_config = _build_transcription_config(config)
                 results = []
@@ -178,6 +185,7 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                         include_timestamps=base_config.include_timestamps,
                         timestamp_granularity=base_config.timestamp_granularity,
                         include_confidence=base_config.include_confidence,
+                        audio_duration=chunk.duration,
                     )
 
                     if chunk.index > 0 and context_text:
@@ -214,6 +222,18 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
 
                         results.append(result)
 
+                        # Save individual chunk JSON for debugging
+                        import json
+                        log_dir = f"logs/jobs/{job_id}"
+                        os.makedirs(log_dir, exist_ok=True)
+                        chunk_debug_path = os.path.join(log_dir, f"chunk-{chunk.index:04d}.json")
+                        try:
+                            with open(chunk_debug_path, "w", encoding="utf-8") as f:
+                                json.dump(result, f, indent=2, ensure_ascii=False)
+                            logger.info("Saved chunk transcript", path=chunk_debug_path)
+                        except Exception as e:
+                            logger.error("Failed to save chunk transcript", error=str(e))
+
                     except Exception as e:
                         logger.error(
                             "Chunk processing failed",
@@ -230,15 +250,30 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                             await session.commit()  # Commit error status
                         raise
 
+                # Save intermediate combined JSON for debugging
+                import json
+                log_dir = f"logs/jobs/{job_id}"
+                os.makedirs(log_dir, exist_ok=True)
+                combined_debug_path = os.path.join(log_dir, "combined_transcript.json")
+                try:
+                    with open(combined_debug_path, "w", encoding="utf-8") as f:
+                        json.dump(results, f, indent=2, ensure_ascii=False)
+                    logger.info("Saved intermediate combined transcript", path=combined_debug_path)
+                except Exception as e:
+                    logger.error("Failed to save intermediate transcript", error=str(e))
+
                 # Merge results
+                logger.info("="*50 + "\n>>> STAGE: TRANSCRIPT MERGER <<<\n" + "="*50)
                 merger = TranscriptMerger()
                 final_transcript = merger.merge_transcripts(results, chunks)
 
                 # Store final result
+                logger.info("="*50 + "\n>>> STAGE: DB & STORAGE PERSISTENCE <<<\n" + "="*50)
                 result_key = storage_service.generate_result_key(job_id)
                 await storage_service.upload_json(result_key, final_transcript)
 
                 await job_repo.set_result(job_id, final_transcript, result_key)
+                await session.commit()  # Explicitly commit the final state
 
                 logger.info("Transcription job completed", job_id=job_id)
 
@@ -291,6 +326,7 @@ async def _process_single_chunk(
     # Convert to dict for storage
     return {
         "text": result.text,
+        "full_text": result.text,  # Alias for debug/intermediate JSON
         "segments": [
             {
                 "text": s.text,
@@ -358,10 +394,17 @@ def _extract_context_from_results(
                 all_speakers.add(speaker)
 
     if not all_segments:
+        logger.debug("No segments found in previous results for context")
         return "", list(all_speakers)
 
     # Take last N segments for context
     context_segments = all_segments[-num_segments:]
+    logger.debug(
+        "Extracting context", 
+        total_segments_available=len(all_segments), 
+        segments_used=len(context_segments),
+        speakers_found=list(all_speakers)
+    )
 
     # Build context text
     context_lines = []
@@ -433,6 +476,9 @@ async def _process_chunk(task, job_id: str, chunk_index: int) -> dict[str, Any]:
                     duration=chunk.end_time - chunk.start_time,
                     file_path=temp_path,
                 )
+                
+                # inject duration into config
+                config.audio_duration = chunk_info.duration
 
                 # Define retry callback
                 async def on_retry_check(attempt, exc, delay):

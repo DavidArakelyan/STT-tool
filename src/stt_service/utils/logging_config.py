@@ -60,5 +60,40 @@ def configure_logging():
         print(f"Warning: Could not initialize file logging: {e}", file=sys.stderr)
     
     # Set levels for noisy libraries
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.engine").setLevel(logging.INFO) # Keep SQL logs as requested
+
+from contextlib import contextmanager
+
+@contextmanager
+def job_logging_context(job_id: str):
+    """Context manager to log output to a separate job-specific file."""
+    if not job_id:
+        yield
+        return
+
+    # Create jobs log directory
+    log_dir = Path("/app/logs/jobs")
+    if not log_dir.exists():
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            # Fallback
+            log_dir = Path("logs/jobs")
+            log_dir.mkdir(parents=True, exist_ok=True)
+            
+    job_log_file = log_dir / f"{job_id}.log"
+    
+    # Create handler
+    handler = logging.FileHandler(job_log_file)
+    handler.setFormatter(logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s'))
+    
+    # Add to root logger
+    root_logger = logging.getLogger()
+    root_logger.addHandler(handler)
+    
+    try:
+        yield
+    finally:
+        # cleanup
+        handler.close()
+        root_logger.removeHandler(handler)

@@ -202,10 +202,26 @@ class AudioChunker:
             boundaries.append((current_start, split_point))
 
             # Next chunk starts with overlap (if enabled)
+            # Next chunk starts with overlap (if enabled)
             if settings.chunking.overlap_enabled:
-                current_start = max(0, split_point - self.overlap_duration)
+                next_start = max(0, split_point - self.overlap_duration)
+                logger.debug(
+                    "Calculated chunk boundary", 
+                    chunk_index=len(boundaries),
+                    start=current_start,
+                    end=split_point,
+                    next_start_overlap=next_start,
+                    overlap_duration=split_point - next_start
+                )
+                current_start = next_start
             else:
                 current_start = split_point
+                
+        logger.info(
+            "Chunk boundaries calculated", 
+            total_chunks=len(boundaries), 
+            overlap_enabled=settings.chunking.overlap_enabled
+        )
 
         return boundaries
 

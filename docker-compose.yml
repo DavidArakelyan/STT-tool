@@ -28,7 +28,7 @@ services:
       - ./frontend:/app/frontend
       - ./migrations:/app/migrations
       - ./.env:/app/.env
-      - logs:/app/logs
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -63,11 +63,19 @@ services:
       - PROVIDER_GEMINI_MODEL=${PROVIDER_GEMINI_MODEL:-gemini-2.0-flash}
       - PROVIDER_ELEVENLABS_API_KEY=${PROVIDER_ELEVENLABS_API_KEY:-}
       - PROVIDER_HISPEECH_API_KEY=${PROVIDER_HISPEECH_API_KEY:-}
+      - PROVIDER_HISPEECH_API_KEY=${PROVIDER_HISPEECH_API_KEY:-}
       - PROVIDER_HISPEECH_API_URL=${PROVIDER_HISPEECH_API_URL:-https://api.hispeech.ai}
+      # Chunking Settings
+      - CHUNKING_MAX_CHUNK_DURATION=${CHUNKING_MAX_CHUNK_DURATION:-300}
+      - CHUNKING_OVERLAP_ENABLED=${CHUNKING_OVERLAP_ENABLED:-true}
+      - CHUNKING_OVERLAP_DURATION=${CHUNKING_OVERLAP_DURATION:-3.0}
+      - CHUNKING_CONTEXT_SEGMENTS=${CHUNKING_CONTEXT_SEGMENTS:-3}
+      - CHUNKING_MIN_SILENCE_DURATION=${CHUNKING_MIN_SILENCE_DURATION:-0.5}
+      - CHUNKING_SILENCE_THRESHOLD_DB=${CHUNKING_SILENCE_THRESHOLD_DB:--40}
     volumes:
       - ./src:/app/src
       - ./.env:/app/.env
-      - logs:/app/logs
+      - ./logs:/app/logs
     depends_on:
       postgres:
         condition: service_healthy
@@ -149,7 +157,6 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
-  logs:
 
 
 networks:

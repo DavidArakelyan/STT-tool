@@ -64,18 +64,77 @@ class GeminiProvider(BaseSTTProvider):
             }
 
             # Generate transcription
+            generation_config = genai.GenerationConfig(
+                temperature=0.1,
+                max_output_tokens=settings.providers.gemini_max_output_tokens,
+                response_mime_type="application/json",
+            )
+
             response = await self.model.generate_content_async(
                 [prompt, audio_part],
-                generation_config=genai.GenerationConfig(
-                    temperature=0.1,
-                    max_output_tokens=8192,
-                ),
+                generation_config=generation_config,
+                request_options={"timeout": settings.providers.gemini_request_timeout},
             )
 
             logger.info("Gemini API response received", has_text=bool(response.text))
 
+            # Check for truncation immediately
+            if response.candidates:
+                finish_reason = response.candidates[0].finish_reason
+                finish_reason_value = finish_reason if isinstance(finish_reason, int) else finish_reason.value
+
+                # FinishReason.MAX_TOKENS = 2 (not 3!)
+                if finish_reason_value == 2:
+                    logger.error(
+                        "Gemini response truncated due to token limit",
+                        chunk_index=config.chunk_index,
+                        audio_duration=config.audio_duration,
+                        finish_reason=finish_reason,
+                    )
+                    raise ProviderError(
+                        message=f"Transcription truncated: exceeded {generation_config.max_output_tokens} tokens. "
+                                f"Chunk too long ({config.audio_duration:.1f}s). Reduce chunk size.",
+                        provider=self.name,
+                        retryable=False,
+                    )
+                elif finish_reason_value not in [1, 2]:  # 1 = STOP, 2 = MAX_TOKENS
+                    logger.warning(
+                        "Gemini finished with unexpected reason",
+                        finish_reason=finish_reason,
+                        finish_reason_value=finish_reason_value,
+                        chunk_index=config.chunk_index,
+                    )
+
+            # Log token usage metrics
+            if hasattr(response, 'usage_metadata') and response.usage_metadata:
+                usage = response.usage_metadata
+                output_tokens = getattr(usage, 'candidates_token_count', 0)
+
+                logger.info(
+                    "Gemini token usage",
+                    chunk_index=config.chunk_index,
+                    output_tokens=output_tokens,
+                    max_allowed=generation_config.max_output_tokens,
+                    utilization_pct=round(100 * output_tokens / generation_config.max_output_tokens, 1) if output_tokens else 0,
+                )
+
+                # Warn if approaching limit (>80%)
+                if output_tokens > 0.8 * generation_config.max_output_tokens:
+                    logger.warning(
+                        "Approaching token limit",
+                        chunk_index=config.chunk_index,
+                        audio_duration=config.audio_duration,
+                    )
+
             # Parse response
-            return self._parse_response(response, config)
+            # Use provided duration from ffmpeg metadata if available, otherwise fallback to estimate
+            if config.audio_duration:
+                duration_est = config.audio_duration
+            else:
+                 # Fallback: 16-bit 16kHz mono = 32KB/s
+                 duration_est = len(audio_data) / 32000
+            
+            return self._parse_response(response, config, duration=duration_est)
 
         except Exception as e:
             error_msg = str(e)
@@ -138,11 +197,14 @@ class GeminiProvider(BaseSTTProvider):
                 f"\n**IMPORTANT - This is a CONTINUATION of a longer recording (chunk {config.chunk_index + 1}).** "
                 f"The conversation was already in progress. Here is the recent transcript for context:\n"
                 f"---\n{config.previous_transcript_context}\n---\n"
-                f"Continue transcribing from where this left off. Maintain speaker consistency with the context above."
+                f"Continue transcribing from where this left off. Maintain speaker consistency with the context above.\n"
+                f"**CRITICAL: DO NOT REPEAT the context provided above. Start transcribing ONLY the new audio.**"
             )
             if config.previous_speakers:
                 speakers_str = ", ".join(config.previous_speakers)
                 prompt_parts.append(f"Known speakers from previous context: {speakers_str}. Reuse these IDs for the same voices.")
+            
+            logger.info("Injecting context into prompt", chunk_index=config.chunk_index, context_length=len(config.previous_transcript_context))
 
         if config.language and config.language.lower() != "auto":
              prompt_parts.append(f"Primary language: {self._get_language_name(config.language)}.")
@@ -195,14 +257,6 @@ Output format (JSON):
             "fr": "French",
             "de": "German",
             "es": "Spanish",
-        }
-        names = {
-            "hy": "Armenian",
-            "en": "English",
-            "ru": "Russian",
-            "fr": "French",
-            "de": "German",
-            "es": "Spanish",
             "auto": "Auto Detect",
         }
         return names.get(code, code)
@@ -211,6 +265,7 @@ Output format (JSON):
         self,
         response: Any,
         config: TranscriptionConfig,
+        duration: float = 0.0,
     ) -> TranscriptionResponse:
         """Parse Gemini response into TranscriptionResponse."""
         import json
@@ -221,6 +276,9 @@ Output format (JSON):
             text = response.text
             if not text:
                 raise ProviderError("Gemini returned empty response")
+            
+            # Debug log raw response (full)
+            logger.info("Gemini raw response text", full_text=text, total_length=len(text))
 
             # Try to find JSON in response (it might be wrapped in markdown code blocks)
             # Find the first { and the last }
@@ -240,6 +298,9 @@ Output format (JSON):
                         logger.warning("Failed to parse Gemini JSON after cleaning", text=text)
 
             if data and isinstance(data, dict):
+                # Strict Validation
+                self._validate_json_structure(data)
+
                 segments_data = data.get("segments", [])
                 segments = []
                 for seg in segments_data:
@@ -265,11 +326,66 @@ Output format (JSON):
                         metadata={"model": settings.providers.gemini_model},
                     )
 
-            # Fallback: treat entire response as plain text, but clean up markdown blocks
+            # Fallback: RegExp Extraction instead of raw dump
+            # If JSON parsing failed, try to extract 'text' fields using regex
+            # Pattern matches: "text": "..."
+            logger.warning("Falling back to regex extraction for Gemini response")
+
+            # Check if response appears truncated
+            if not text.rstrip().endswith('}') or text.count('{') != text.count('}'):
+                logger.error(
+                    "Gemini response appears truncated (malformed JSON)",
+                    ends_with=text[-50:] if len(text) > 50 else text,
+                )
+
+            # Require closing quote (don't accept truncated text)
+            matches = re.findall(r'"text"\s*:\s*"((?:[^"\\]|\\.)*)"\s*[,}]', text, re.DOTALL)
+
+            if not matches:
+                # If strict regex fails, log and raise error
+                logger.error(
+                    "Failed to extract any text from Gemini response",
+                    response_length=len(text),
+                    response_preview=text[:500],
+                )
+                raise ProviderError(
+                    "Failed to parse Gemini response: JSON is malformed and regex extraction failed. "
+                    "This may indicate truncated output."
+                )
+
+            if matches:
+                def unescape_string(s):
+                    try:
+                        # Try standard JSON unescape first
+                        return json.loads(f'"{s}"')
+                    except Exception:
+                        # Fallback: manual unescape of common JSON escapes
+                        # This avoids the unicode_escape latin-1 pitfall that causes mojibake
+                        return s.replace('\\"', '"').replace('\\n', '\n').replace('\\\\', '\\')
+
+                full_text = " ".join(unescape_string(match) for match in matches)
+                return TranscriptionResponse(
+                    text=full_text,
+                    segments=[
+                        TranscriptionSegment(
+                            text=full_text,
+                            start_time=0.0,
+                            end_time=duration,  # Use estimated duration (better than 0)
+                            speaker_id="SPEAKER_00",
+                        )
+                    ],
+                    language_detected=config.language,
+                    metadata={"model": settings.providers.gemini_model, "fallback": "regex"},
+                )
+
+            # Last resort: Plain text cleanup
             clean_text = text.strip()
-            # Remove markdown code blocks like ```json ... ``` or just ``` ... ```
             clean_text = re.sub(r"```[a-z]*\n?", "", clean_text)
             clean_text = clean_text.replace("```", "").strip()
+            # If it still looks like JSON, it's probably broken JSON, but we shouldn't show it as transcript
+            if clean_text.startswith("{") and "segments" in clean_text:
+                 # It's broken JSON and regex failed.
+                 raise ProviderError("Failed to parse Gemini response: Invalid JSON and regex extraction failed.")
 
             return TranscriptionResponse(
                 text=clean_text,
@@ -300,3 +416,35 @@ Output format (JSON):
         """Gemini supports a wide range of languages."""
         # Gemini multimodal supports many languages including Armenian
         return True
+    def _validate_json_structure(self, data: dict[str, Any]) -> None:
+        """Validate that the parsed JSON matches the expected schema.
+        
+        Args:
+            data: The parsed JSON dictionary.
+            
+        Raises:
+            ProviderError: If validation fails (caught by caller to trigger fallback).
+        """
+        if "segments" not in data:
+            logger.warning("JSON validation failed: missing 'segments' key")
+            raise ProviderError("JSON validation failed: missing 'segments' key")
+            
+        segments = data.get("segments")
+        if not isinstance(segments, list):
+            logger.warning("JSON validation failed: 'segments' is not a list")
+            raise ProviderError("JSON validation failed: 'segments' is not a list")
+            
+        for i, seg in enumerate(segments):
+            if not isinstance(seg, dict):
+                 raise ProviderError(f"Segment {i} is not a dict")
+            
+            required_keys = ["speaker", "start", "end", "text"]
+            for key in required_keys:
+                if key not in seg:
+                    logger.warning(f"JSON validation failed: segment {i} missing '{key}'", segment=seg)
+                    raise ProviderError(f"Segment {i} missing required key: {key}")
+            
+            # Type checks (loose validation, direct casting happens in parse)
+            if not isinstance(seg.get("start"), (int, float, str)) or not isinstance(seg.get("end"), (int, float, str)):
+                 logger.warning(f"JSON validation failed: segment {i} timestamps invalid", segment=seg)
+                 raise ProviderError(f"Segment {i} timestamps invalid type")

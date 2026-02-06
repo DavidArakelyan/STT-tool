@@ -6,9 +6,11 @@ from typing import Any
 
 import structlog
 
+from stt_service.config import get_settings
 from stt_service.core.chunker import ChunkInfo
 
 logger = structlog.get_logger()
+settings = get_settings()
 
 
 @dataclass
@@ -72,6 +74,11 @@ class TranscriptMerger:
         for i, (result, chunk_info) in enumerate(zip(chunk_results, chunk_infos)):
             segments = self._extract_segments(result, chunk_info)
             all_segments.extend(segments)
+
+        # Validate chunk completeness
+        validation_warnings = self._validate_chunk_completeness(chunk_results, chunk_infos)
+        if validation_warnings:
+            logger.warning("Chunk validation warnings detected", warnings=validation_warnings)
 
         # Sort by start time
         all_segments.sort(key=lambda s: s.start_time)
@@ -200,7 +207,14 @@ class TranscriptMerger:
             if seg.start_time < prev.end_time - self.overlap_threshold:
                 # Segments overlap significantly
                 # Check if texts are similar (likely duplicate from overlap)
-                if self._texts_similar(prev.text, seg.text):
+                is_similar = self._texts_similar(prev.text, seg.text)
+                if is_similar:
+                    logger.debug(
+                        "Deduplicating segment", 
+                        text_prev=prev.text[:30], 
+                        text_curr=seg.text[:30],
+                        overlap_sec=prev.end_time - seg.start_time
+                    )
                     # Keep the longer one
                     if len(seg.text) > len(prev.text):
                         result[-1] = seg
@@ -209,6 +223,12 @@ class TranscriptMerger:
                 # Different text in overlap - might be different speaker
                 # Truncate the previous segment
                 if seg.start_time > prev.start_time:
+                    logger.debug(
+                        "Truncating overlapping segment", 
+                        prev_end=prev.end_time,
+                        new_end=seg.start_time,
+                        next_start=seg.start_time
+                    )
                     result[-1] = MergedSegment(
                         speaker_id=prev.speaker_id,
                         text=prev.text,
@@ -222,12 +242,20 @@ class TranscriptMerger:
 
         return result
 
-    def _texts_similar(self, text1: str, text2: str, threshold: float = 0.7) -> bool:
+    def _texts_similar(self, text1: str, text2: str, threshold: float | None = None) -> bool:
         """Check if two texts are similar (for deduplication).
-        
+
         Uses word overlap for space-separated languages, and falls back to
         character-level comparison for Armenian and other scripts.
+
+        Args:
+            text1: First text to compare
+            text2: Second text to compare
+            threshold: Similarity threshold (0.0-1.0). If None, uses config value (0.8).
+                      Increased from 0.7 to reduce false positive deduplication.
         """
+        if threshold is None:
+            threshold = settings.chunking.overlap_similarity_threshold
         if not text1 or not text2:
             return False
             
@@ -274,6 +302,47 @@ class TranscriptMerger:
                 return True
         
         return False
+
+    def _validate_chunk_completeness(
+        self,
+        chunk_results: list[dict[str, Any]],
+        chunk_infos: list[ChunkInfo],
+    ) -> list[str]:
+        """Validate that chunks appear complete (not truncated).
+
+        Returns list of warning messages for suspicious chunks.
+        """
+        warnings = []
+
+        for i, (result, chunk_info) in enumerate(zip(chunk_results, chunk_infos)):
+            segments = result.get("segments", [])
+
+            # Check 1: Very short transcript for long audio (likely fallback/truncated)
+            if chunk_info.duration > 60:  # More than 1 minute
+                total_text = result.get("text", "")
+                if len(total_text) < 100:  # Less than 100 characters
+                    warnings.append(
+                        f"Chunk {i}: Suspiciously short transcript ({len(total_text)} chars) "
+                        f"for {chunk_info.duration:.1f}s audio"
+                    )
+
+            # Check 2: Last segment ends abruptly (no punctuation)
+            if segments:
+                last_segment_text = segments[-1].get("text", "").strip()
+                if last_segment_text and last_segment_text[-1] not in ".!?։":
+                    warnings.append(
+                        f"Chunk {i}: Last segment doesn't end with punctuation: "
+                        f"'{last_segment_text[-50:]}'"
+                    )
+
+            # Check 3: Metadata indicates fallback parsing
+            metadata = result.get("metadata", {})
+            if metadata.get("fallback") == "regex":
+                warnings.append(
+                    f"Chunk {i}: Used fallback regex parsing (JSON parse failed)"
+                )
+
+        return warnings
 
     def _normalize_speakers(
         self,

@@ -33,6 +33,10 @@ class TranscriptionConfig:
     timestamp_granularity: str = "segment"  # "segment" or "word"
     include_confidence: bool = False
 
+    # Audio metadata
+    audio_duration: float | None = None
+
+
 
 @dataclass
 class TranscriptionSegment:
