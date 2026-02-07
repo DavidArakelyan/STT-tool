@@ -436,7 +436,10 @@ function renderJobCard(job) {
         <div class="job-card ${isActive ? 'job-active' : ''}" id="job-${job.job_id}" data-created-at="${job.created_at}">
             <div class="job-header">
                 <div class="job-info">
-                    <h3>${job.original_filename || 'Unknown file'}</h3>
+                    <div class="job-title-row">
+                        <h3>${job.original_filename || 'Unknown file'}</h3>
+                        <span class="job-id-badge" title="Copy ID" onclick="navigator.clipboard.writeText('${job.job_id}')">${job.job_id.slice(0, 8)}...</span>
+                    </div>
                     <div class="job-meta">
                         <span>🎵 ${job.duration_seconds ? job.duration_seconds.toFixed(1) + 's' : 'N/A'}</span>
                         <span>📦 ${formatFileSize(job.file_size_bytes || 0)}</span>
@@ -671,7 +674,9 @@ function renderChunks(jobId, chunks) {
             failed: '❌'
         }[chunk.status] || '❓';
         return `
-                    <div class="chunk-badge ${chunk.status}" title="${chunk.error || `${chunk.start_time.toFixed(1)}s - ${chunk.end_time.toFixed(1)}s`}">
+                    <div class="chunk-badge ${chunk.status} clickable" 
+                         onclick="viewChunkLog('${jobId}', ${chunk.chunk_index})"
+                         title="View Log: ${chunk.error || `${chunk.start_time.toFixed(1)}s - ${chunk.end_time.toFixed(1)}s`}">
                         ${icon} #${chunk.chunk_index + 1}
                         ${chunk.attempt_count > 1 ? `(${chunk.attempt_count})` : ''}
                     </div>
@@ -679,6 +684,38 @@ function renderChunks(jobId, chunks) {
     }).join('')}
         </div>
     `;
+}
+
+
+async function viewChunkLog(jobId, chunkIndex) {
+    try {
+        const response = await fetch(`${API_BASE}/jobs/${jobId}/chunks/${chunkIndex}/log`, {
+            headers: { 'X-API-Key': getApiKey() }
+        });
+
+        if (!response.ok) {
+            throw new Error('Log not found');
+        }
+
+        const data = await response.json();
+
+        // Use the Logs Modal to display this
+        const modal = document.getElementById('logsModal');
+        document.getElementById('logsMeta').innerHTML = `
+            <strong>Chunk #${chunkIndex + 1}</strong> <span class="text-muted">(${jobId.slice(0, 8)}...)</span>
+        `;
+
+        const container = document.getElementById('logsContainer');
+        container.innerHTML = `<pre class="json-log">${JSON.stringify(data, null, 2)}</pre>`;
+
+        // Hide system logs if open
+        document.getElementById('systemLogsContainer').style.display = 'none';
+
+        modal.classList.add('open');
+
+    } catch (error) {
+        showToast(`Could not load chunk log: ${error.message}`, 'error');
+    }
 }
 
 // ===== Job Actions =====
@@ -752,7 +789,7 @@ function showDeleteConfirm(jobId, filename, chunkCount) {
     const modal = document.getElementById('deleteModal');
     document.getElementById('deleteFileName').textContent = filename;
     document.getElementById('deleteChunkCount').textContent = chunkCount;
-    document.getElementById('deleteJobId').textContent = jobId.slice(0, 8) + '...';
+    document.getElementById('deleteJobId').textContent = jobId;
     modal.classList.add('open');
 }
 
@@ -764,6 +801,36 @@ function closeDeleteModal() {
 function confirmDelete() {
     if (pendingDeleteJobId) {
         deleteJob(pendingDeleteJobId);
+    }
+}
+
+// ===== Delete All Jobs =====
+function showDeleteAllConfirm() {
+    document.getElementById('deleteAllModal').classList.add('open');
+}
+
+function closeDeleteAllModal() {
+    document.getElementById('deleteAllModal').classList.remove('open');
+}
+
+async function confirmDeleteAll() {
+    closeDeleteAllModal();
+    try {
+        const response = await fetch(`${API_BASE}/jobs`, {
+            method: 'DELETE',
+            headers: { 'X-API-Key': getApiKey() }
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to delete all jobs');
+        }
+
+        const result = await response.json();
+        showToast(result.message || 'All jobs deleted', 'success');
+        refreshJobs();
+    } catch (error) {
+        showToast(error.message, 'error');
     }
 }
 
@@ -782,12 +849,19 @@ async function downloadBundle(jobId) {
         }
 
         // Get filename from header or fallback
-        let filename = `bundle_${jobId.slice(0, 8)}.zip`;
+        let filename = `${jobId}.zip`;
         const contentDisposition = response.headers.get('Content-Disposition');
         if (contentDisposition) {
-            const match = contentDisposition.match(/filename=(.+)/i);
-            if (match && match[1]) {
-                filename = match[1].replace(/['"]/g, '');
+            // Try filename*=UTF-8''... first (RFC 5987)
+            const filenameStar = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+            if (filenameStar && filenameStar[1]) {
+                filename = decodeURIComponent(filenameStar[1]);
+            } else {
+                // Fallback to standard filename=...
+                const filenameMatch = contentDisposition.match(/filename="?([^";]+)"?/i);
+                if (filenameMatch && filenameMatch[1]) {
+                    filename = filenameMatch[1];
+                }
             }
         }
 

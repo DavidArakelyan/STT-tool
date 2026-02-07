@@ -5,6 +5,8 @@ from fastapi.responses import StreamingResponse
 import io
 import zipfile
 import json
+import shutil
+from pathlib import Path
 
 from stt_service.api.dependencies import (
     APIKey,
@@ -359,10 +361,15 @@ async def download_bundle(
 
     zip_buffer.seek(0)
 
+    zip_buffer.seek(0)
+    
+    from urllib.parse import quote
+    encoded_filename = quote(f"{base_name}.zip")
+
     return StreamingResponse(
         zip_buffer,
         media_type="application/zip",
-        headers={"Content-Disposition": f"attachment; filename={base_name}_bundle.zip"},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"},
     )
 
 
@@ -393,9 +400,56 @@ async def delete_job(
 ) -> MessageResponse:
     """Delete a job and all associated files."""
     result = await orchestrator.delete_job(job_id)
+    
+    # Also delete logs directory
+    try:
+        log_dir = Path(f"logs/jobs/{job_id}")
+        if log_dir.exists() and log_dir.is_dir():
+            shutil.rmtree(log_dir)
+            result['deleted_files'] += 1  # Count log dir as a file/resource
+    except Exception as e:
+        # Log error but don't fail the request
+        import structlog
+        logger = structlog.get_logger()
+        logger.warning(f"Failed to delete log directory for job {job_id}", error=str(e))
+
     return MessageResponse(
         message=f"Job {job_id} deleted. {result['deleted_files']} files removed."
     )
+
+
+@router.delete("", response_model=MessageResponse)
+async def delete_all_jobs(
+    job_repo: JobRepo,
+    _api_key: APIKey,
+    background_tasks: bool = Query(False, description="Run deletion in background (not implemented yet)"),
+    orchestrator: JobOrchestrator = Depends(get_orchestrator),
+) -> MessageResponse:
+    """Delete ALL jobs and associated files."""
+    # List all jobs (no limit)
+    # Note: For very large numbers of jobs, this should be paginated or backgrounded
+    # But for a personal tool, iterating 100-200 jobs is fine.
+    jobs = await job_repo.list_jobs(limit=1000)
+    
+    deleted_count = 0
+    errors = []
+    
+    for job in jobs:
+        try:
+            await orchestrator.delete_job(job.id)
+            # Delete logs
+            log_dir = Path(f"logs/jobs/{job.id}")
+            if log_dir.exists() and log_dir.is_dir():
+                shutil.rmtree(log_dir)
+            deleted_count += 1
+        except Exception as e:
+            errors.append(f"{job.id}: {str(e)}")
+            
+    msg = f"Deleted {deleted_count} jobs."
+    if errors:
+        msg += f" Failed to delete {len(errors)} jobs."
+        
+    return MessageResponse(message=msg)
 
 
 @router.get("/{job_id}/system-logs")
@@ -453,4 +507,35 @@ async def cancel_job(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
+        )
+
+
+@router.get("/{job_id}/chunks/{chunk_index}/log")
+async def get_chunk_log(
+    job_id: str,
+    chunk_index: int,
+    _api_key: APIKey,
+) -> dict:
+    """Get the raw JSON log/result for a specific chunk."""
+    try:
+        # Construct path to chunk log file
+        # Pattern: logs/jobs/{job_id}/chunk_{index}.json
+        # NOTE: The worker saves it as f"chunk_{chunk.chunk_index}.json" inside f"logs/jobs/{job_id}"
+        log_path = Path(f"logs/jobs/{job_id}/chunk_{chunk_index}.json")
+        
+        if not log_path.exists():
+             raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Log file for chunk {chunk_index} not found",
+            )
+            
+        with open(log_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+            
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to read chunk log: {str(e)}",
         )

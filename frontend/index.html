@@ -127,7 +127,10 @@
         <div class="card jobs-section">
             <div class="section-header">
                 <h2>Transcription Jobs</h2>
-                <button class="btn btn-secondary" onclick="refreshJobs()">🔄 Refresh</button>
+                <div class="header-actions">
+                    <button class="btn btn-danger" onclick="showDeleteAllConfirm()">🗑️ Delete All</button>
+                    <button class="btn btn-secondary" onclick="refreshJobs()">🔄 Refresh</button>
+                </div>
             </div>
 
             <div class="jobs-list" id="jobsList">
@@ -238,11 +241,34 @@
             </div>
         </div>
 
+        <!-- Delete All Confirmation Modal -->
+        <div class="modal" id="deleteAllModal">
+            <div class="modal-content modal-small">
+                <div class="modal-header">
+                    <h2>⚠️ Delete All Jobs</h2>
+                    <button class="btn btn-icon" onclick="closeDeleteAllModal()">✕</button>
+                </div>
+                <div class="modal-body">
+                    <p class="delete-warning">Are you SURE you want to delete ALL jobs?</p>
+                    <p class="delete-note">This action cannot be undone. It will permanently remove:</p>
+                    <ul class="delete-list">
+                        <li>All audio files</li>
+                        <li>All transcripts</li>
+                        <li>All logs and records</li>
+                    </ul>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeDeleteAllModal()">Cancel</button>
+                    <button class="btn btn-danger" onclick="confirmDeleteAll()">🔥 Delete Everything</button>
+                </div>
+            </div>
+        </div>
+
         <!-- Toast Container -->
         <div class="toast-container" id="toastContainer"></div>
     </div>
 
-    <script src="/static/app.js?v=3"></script>
+    <script src="/static/app.js?v=4"></script>
     <script>
         // Close delete modal on outside click
         document.getElementById('deleteModal').addEventListener('click', (e) => {
