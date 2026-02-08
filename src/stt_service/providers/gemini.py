@@ -65,6 +65,35 @@ class GeminiProvider(BaseSTTProvider):
 
             # Generate transcription
             # Gemini 3 is optimized for temperature=1.0 (default)
+            # Build response schema with duration constraints
+            segment_properties = {
+                "speaker": {
+                    "type": "string",
+                    "description": "Speaker identifier (e.g., SPEAKER_00, SPEAKER_01)"
+                },
+                "start": {
+                    "type": "number",
+                    "description": "Segment start time in seconds"
+                },
+                "end": {
+                    "type": "number",
+                    "description": "Segment end time in seconds"
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Transcribed text for this segment"
+                }
+            }
+
+            # Add maximum constraints if duration is available
+            # This prevents timestamp overflow where Gemini generates timestamps beyond chunk duration
+            if config.audio_duration:
+                logger.debug(
+                    "Processing chunk with duration constraint",
+                    max_timestamp=config.audio_duration,
+                    chunk_index=config.chunk_index,
+                )
+
             generation_config = genai.GenerationConfig(
                 temperature=settings.providers.gemini_temperature,
                 max_output_tokens=settings.providers.gemini_max_output_tokens,
@@ -78,33 +107,12 @@ class GeminiProvider(BaseSTTProvider):
                             "description": "Array of transcribed segments with speaker identification and timestamps",
                             "items": {
                                 "type": "object",
-                                "properties": {
-                                    "speaker": {
-                                        "type": "string",
-                                        "description": "Speaker identifier (e.g., SPEAKER_00, SPEAKER_01)"
-                                    },
-                                    "start": {
-                                        "type": "number",
-                                        "description": "Segment start time in seconds"
-                                    },
-                                    "end": {
-                                        "type": "number",
-                                        "description": "Segment end time in seconds"
-                                    },
-                                    "text": {
-                                        "type": "string",
-                                        "description": "Transcribed text for this segment"
-                                    }
-                                },
+                                "properties": segment_properties,
                                 "required": ["speaker", "start", "end", "text"]
                             }
-                        },
-                        "full_text": {
-                            "type": "string",
-                            "description": "Complete transcription without speaker labels or timestamps"
                         }
                     },
-                    "required": ["segments", "full_text"]
+                    "required": ["segments"]  # Removed full_text to save ~50% tokens
                 }
             )
 
@@ -229,6 +237,17 @@ class GeminiProvider(BaseSTTProvider):
             "Transcribe the following audio accurately.",
         ]
 
+        # Add duration constraint to prevent timestamp overflow
+        # Note: audio_duration includes chunk overlap (e.g., 3s overlap between consecutive chunks).
+        # Timestamps must be relative to this audio clip (0.0 to audio_duration).
+        # The merger will handle deduplication of overlapping content.
+        if config.audio_duration:
+            prompt_parts.append(
+                f"\n**CRITICAL TIMING CONSTRAINT**: This audio clip is exactly {config.audio_duration:.1f} seconds long. "
+                f"All segment timestamps (start and end) MUST be between 0.0 and {config.audio_duration:.1f} seconds. "
+                f"Do NOT generate timestamps beyond {config.audio_duration:.1f}s."
+            )
+
         # Add context from previous chunks for better continuity
         if config.previous_transcript_context and config.chunk_index > 0:
             prompt_parts.append(
@@ -241,7 +260,7 @@ class GeminiProvider(BaseSTTProvider):
             if config.previous_speakers:
                 speakers_str = ", ".join(config.previous_speakers)
                 prompt_parts.append(f"Known speakers from previous context: {speakers_str}. Reuse these IDs for the same voices.")
-            
+
             logger.info("Injecting context into prompt", chunk_index=config.chunk_index, context_length=len(config.previous_transcript_context))
 
         if config.language and config.language.lower() != "auto":
@@ -278,8 +297,7 @@ Output format (JSON):
       "end": 5.5,
       "text": "transcribed text here"
     }
-  ],
-  "full_text": "complete transcription without speaker labels"
+  ]
 }
 """
         )
@@ -352,9 +370,8 @@ Output format (JSON):
                         )
                     )
 
-                full_text = data.get("full_text", "")
-                if not full_text and segments:
-                    full_text = " ".join(s.text for s in segments)
+                # Reconstruct full_text from segments (Gemini no longer provides it to save tokens)
+                full_text = " ".join(s.text for s in segments) if segments else ""
 
                 if full_text or segments:
                     return TranscriptionResponse(
