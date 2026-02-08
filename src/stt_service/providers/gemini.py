@@ -43,6 +43,9 @@ class GeminiProvider(BaseSTTProvider):
         audio_format: str = "wav",
     ) -> TranscriptionResponse:
         """Transcribe audio using Gemini multimodal API."""
+        import time
+        start_time = time.time()
+        
         try:
             # Get MIME type
             mime_type = self._get_mime_type(audio_format)
@@ -122,12 +125,20 @@ class GeminiProvider(BaseSTTProvider):
                 request_options={"timeout": settings.providers.gemini_request_timeout},
             )
 
+            # Calculate processing latency
+            processing_latency_ms = int((time.time() - start_time) * 1000)
+
             logger.info("Gemini API response received", has_text=bool(response.text))
 
-            # Check for truncation immediately
+            # Extract finish reason
+            finish_reason_str = "UNKNOWN"
+            finish_reason_value = None
             if response.candidates:
                 finish_reason = response.candidates[0].finish_reason
                 finish_reason_value = finish_reason if isinstance(finish_reason, int) else finish_reason.value
+                # Map finish reason value to string
+                finish_reason_map = {1: "STOP", 2: "MAX_TOKENS", 3: "SAFETY", 4: "RECITATION", 5: "OTHER"}
+                finish_reason_str = finish_reason_map.get(finish_reason_value, f"UNKNOWN_{finish_reason_value}")
 
                 # FinishReason.MAX_TOKENS = 2 (not 3!)
                 if finish_reason_value == 2:
@@ -151,14 +162,18 @@ class GeminiProvider(BaseSTTProvider):
                         chunk_index=config.chunk_index,
                     )
 
-            # Log token usage metrics
+            # Extract token usage metrics
+            input_tokens = 0
+            output_tokens = 0
             if hasattr(response, 'usage_metadata') and response.usage_metadata:
                 usage = response.usage_metadata
-                output_tokens = getattr(usage, 'candidates_token_count', 0)
+                input_tokens = getattr(usage, 'prompt_token_count', 0) or 0
+                output_tokens = getattr(usage, 'candidates_token_count', 0) or 0
 
                 logger.info(
                     "Gemini token usage",
                     chunk_index=config.chunk_index,
+                    input_tokens=input_tokens,
                     output_tokens=output_tokens,
                     max_allowed=generation_config.max_output_tokens,
                     utilization_pct=round(100 * output_tokens / generation_config.max_output_tokens, 1) if output_tokens else 0,
@@ -172,6 +187,15 @@ class GeminiProvider(BaseSTTProvider):
                         audio_duration=config.audio_duration,
                     )
 
+            # Build metadata dict
+            response_metadata = {
+                "model": settings.providers.gemini_model,
+                "input_tokens": input_tokens,
+                "output_tokens": output_tokens,
+                "processing_latency_ms": processing_latency_ms,
+                "finish_reason": finish_reason_str,
+            }
+
             # Parse response
             # Use provided duration from ffmpeg metadata if available, otherwise fallback to estimate
             if config.audio_duration:
@@ -180,7 +204,7 @@ class GeminiProvider(BaseSTTProvider):
                  # Fallback: 16-bit 16kHz mono = 32KB/s
                  duration_est = len(audio_data) / 32000
             
-            return self._parse_response(response, config, duration=duration_est)
+            return self._parse_response(response, config, duration=duration_est, extra_metadata=response_metadata)
 
         except Exception as e:
             error_msg = str(e)
@@ -322,6 +346,7 @@ Output format (JSON):
         response: Any,
         config: TranscriptionConfig,
         duration: float = 0.0,
+        extra_metadata: dict[str, Any] | None = None,
     ) -> TranscriptionResponse:
         """Parse Gemini response into TranscriptionResponse."""
         import json
@@ -374,11 +399,15 @@ Output format (JSON):
                 full_text = " ".join(s.text for s in segments) if segments else ""
 
                 if full_text or segments:
+                    # Merge extra_metadata with base metadata
+                    metadata = {"model": settings.providers.gemini_model}
+                    if extra_metadata:
+                        metadata.update(extra_metadata)
                     return TranscriptionResponse(
                         text=full_text,
                         segments=segments,
                         language_detected=config.language,
-                        metadata={"model": settings.providers.gemini_model},
+                        metadata=metadata,
                     )
 
             # Fallback: RegExp Extraction instead of raw dump
@@ -419,6 +448,10 @@ Output format (JSON):
                         return s.replace('\\"', '"').replace('\\n', '\n').replace('\\\\', '\\')
 
                 full_text = " ".join(unescape_string(match) for match in matches)
+                # Merge extra_metadata with fallback metadata
+                metadata = {"model": settings.providers.gemini_model, "fallback": "regex"}
+                if extra_metadata:
+                    metadata.update(extra_metadata)
                 return TranscriptionResponse(
                     text=full_text,
                     segments=[
@@ -430,7 +463,7 @@ Output format (JSON):
                         )
                     ],
                     language_detected=config.language,
-                    metadata={"model": settings.providers.gemini_model, "fallback": "regex"},
+                    metadata=metadata,
                 )
 
             # Last resort: Plain text cleanup
@@ -442,6 +475,10 @@ Output format (JSON):
                  # It's broken JSON and regex failed.
                  raise ProviderError("Failed to parse Gemini response: Invalid JSON and regex extraction failed.")
 
+            # Merge extra_metadata with raw_response metadata
+            metadata = {"model": settings.providers.gemini_model, "raw_response": True}
+            if extra_metadata:
+                metadata.update(extra_metadata)
             return TranscriptionResponse(
                 text=clean_text,
                 segments=[
@@ -453,7 +490,7 @@ Output format (JSON):
                     )
                 ],
                 language_detected=config.language,
-                metadata={"model": settings.providers.gemini_model, "raw_response": True},
+                metadata=metadata,
             )
 
         except Exception as e:

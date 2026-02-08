@@ -85,3 +85,8 @@ temp/
 # OS
 .DS_Store
 Thumbs.db
+
+# Media and sample files
+media/
+Samples.zip
+*_transcript_*.txt
