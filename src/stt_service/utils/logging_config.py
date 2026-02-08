@@ -71,17 +71,17 @@ def job_logging_context(job_id: str):
         yield
         return
 
-    # Create jobs log directory
-    log_dir = Path("/app/logs/jobs")
+    # Create jobs log directory (inside job folder so it gets cleaned up with job files)
+    log_dir = Path("/app/logs/jobs") / job_id
     if not log_dir.exists():
         try:
             log_dir.mkdir(parents=True, exist_ok=True)
         except Exception:
             # Fallback
-            log_dir = Path("logs/jobs")
+            log_dir = Path("logs/jobs") / job_id
             log_dir.mkdir(parents=True, exist_ok=True)
             
-    job_log_file = log_dir / f"{job_id}.log"
+    job_log_file = log_dir / "job.log"
     
     # Create handler
     handler = logging.FileHandler(job_log_file)

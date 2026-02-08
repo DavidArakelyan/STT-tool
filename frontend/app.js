@@ -438,7 +438,7 @@ function renderJobCard(job) {
                 <div class="job-info">
                     <div class="job-title-row">
                         <h3>${job.original_filename || 'Unknown file'}</h3>
-                        <span class="job-id-badge" title="Copy ID" onclick="navigator.clipboard.writeText('${job.job_id}')">${job.job_id.slice(0, 8)}...</span>
+                        <span class="job-id-badge" title="Copy ID" onclick="navigator.clipboard.writeText('${job.job_id}')"><span class="job-id-label">Job ID:</span> ${job.job_id}</span>
                     </div>
                     <div class="job-meta">
                         <span>🎵 ${job.duration_seconds ? job.duration_seconds.toFixed(1) + 's' : 'N/A'}</span>

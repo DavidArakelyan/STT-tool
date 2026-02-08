@@ -601,6 +601,11 @@ select {
     border: 1px solid var(--border-color);
 }
 
+.job-id-label {
+    color: var(--accent-primary);
+    font-weight: 600;
+}
+
 .job-card.job-active {
     border-color: var(--processing);
     background: linear-gradient(135deg, rgba(59, 130, 246, 0.1), rgba(59, 130, 246, 0.02));
