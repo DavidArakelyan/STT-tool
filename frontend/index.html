@@ -95,7 +95,7 @@
                     <label for="provider">Provider</label>
                     <select id="provider">
                         <option value="hispeech">HiSpeech (Armenian)</option>
-                        <option value="gemini">Gemini</option>
+                        <option value="gemini" selected>Gemini</option>
                         <option value="elevenlabs">ElevenLabs</option>
                         <option value="whisper">OpenAI Whisper</option>
                     </select>
@@ -197,6 +197,8 @@
                             Refresh</button>
                         <button class="btn btn-dark" onclick="toggleSystemLogs()" id="detailedLogsBtn">🔍 Detailed
                             Logs</button>
+                        <button class="btn btn-primary" onclick="downloadChunkLog()" id="downloadChunkBtn"
+                            style="display: none;">📥 Download</button>
                     </div>
                     <button class="btn btn-secondary" onclick="closeLogsModal()">Close</button>
                 </div>

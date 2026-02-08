@@ -686,6 +686,9 @@ function renderChunks(jobId, chunks) {
     `;
 }
 
+// Track current chunk data for download
+let currentChunkData = null;
+let currentChunkInfo = null;
 
 async function viewChunkLog(jobId, chunkIndex) {
     try {
@@ -699,10 +702,24 @@ async function viewChunkLog(jobId, chunkIndex) {
 
         const data = await response.json();
 
+        // Store for download
+        currentChunkData = data;
+        currentChunkInfo = { jobId, chunkIndex };
+
+        // Format chunk time range as human-readable (M:SS format)
+        const formatTime = (seconds) => {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        };
+        const startTime = data.chunk_start_time ?? 0;
+        const endTime = data.chunk_end_time ?? 0;
+        const timeRange = `(${formatTime(startTime)} - ${formatTime(endTime)})`;
+
         // Use the Logs Modal to display this
         const modal = document.getElementById('logsModal');
         document.getElementById('logsMeta').innerHTML = `
-            <strong>Chunk #${chunkIndex + 1}</strong> <span class="text-muted">(${jobId.slice(0, 8)}...)</span>
+            <strong>Chunk #${chunkIndex + 1}</strong> <span class="text-muted">${timeRange}</span> <span class="text-muted" style="margin-left: 0.5rem;">[job:${jobId}]</span>
         `;
 
         const container = document.getElementById('logsContainer');
@@ -711,11 +728,44 @@ async function viewChunkLog(jobId, chunkIndex) {
         // Hide system logs if open
         document.getElementById('systemLogsContainer').style.display = 'none';
 
+        // Show download button for chunk view
+        document.getElementById('downloadChunkBtn').style.display = 'inline-flex';
+
         modal.classList.add('open');
 
     } catch (error) {
         showToast(`Could not load chunk log: ${error.message}`, 'error');
     }
+}
+
+function downloadChunkLog() {
+    if (!currentChunkData || !currentChunkInfo) {
+        showToast('No chunk data to download', 'error');
+        return;
+    }
+
+    const { jobId, chunkIndex } = currentChunkInfo;
+    const blob = new Blob([JSON.stringify(currentChunkData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `chunk-${String(chunkIndex).padStart(4, '0')}_${jobId.slice(0, 8)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+function closeLogsModal() {
+    document.getElementById('logsModal').classList.remove('open');
+    // Hide download button when closing
+    document.getElementById('downloadChunkBtn').style.display = 'none';
+    // Clear chunk data
+    currentChunkData = null;
+    currentChunkInfo = null;
+    // Clear job logs data
+    currentLogsJobId = null;
+    stopSystemLogsPolling();
 }
 
 // ===== Job Actions =====
@@ -1143,12 +1193,6 @@ function renderLogs(data) {
             </div>
         `;
     }).join('');
-}
-
-function closeLogsModal() {
-    document.getElementById('logsModal').classList.remove('open');
-    currentLogsJobId = null;
-    stopSystemLogsPolling();
 }
 
 function refreshLogs() {
