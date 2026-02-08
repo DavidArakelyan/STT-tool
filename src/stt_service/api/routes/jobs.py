@@ -519,9 +519,9 @@ async def get_chunk_log(
     """Get the raw JSON log/result for a specific chunk."""
     try:
         # Construct path to chunk log file
-        # Pattern: logs/jobs/{job_id}/chunk_{index}.json
-        # NOTE: The worker saves it as f"chunk_{chunk.chunk_index}.json" inside f"logs/jobs/{job_id}"
-        log_path = Path(f"logs/jobs/{job_id}/chunk_{chunk_index}.json")
+        # Pattern: logs/jobs/{job_id}/chunk-XXXX.json (4-digit padded)
+        # NOTE: The worker saves it as f"chunk-{chunk.index:04d}.json" inside f"logs/jobs/{job_id}"
+        log_path = Path(f"logs/jobs/{job_id}/chunk-{chunk_index:04d}.json")
         
         if not log_path.exists():
              raise HTTPException(

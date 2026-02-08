@@ -816,11 +816,25 @@ select {
 .chunk-badge.completed {
     border-color: var(--success);
     color: var(--success);
+    cursor: pointer;
+    transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.chunk-badge.completed:hover {
+    background: rgba(16, 185, 129, 0.15);
+    transform: scale(1.05);
 }
 
 .chunk-badge.failed {
     border-color: var(--error);
     color: var(--error);
+    cursor: pointer;
+    transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.chunk-badge.failed:hover {
+    background: rgba(239, 68, 68, 0.15);
+    transform: scale(1.05);
 }
 
 /* ===== Modal ===== */
