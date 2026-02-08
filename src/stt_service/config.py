@@ -191,6 +191,16 @@ class Settings(BaseSettings):
     supported_audio_formats: list[str] = [
         "mp3", "wav", "m4a", "flac", "ogg", "webm", "aac", "wma", "opus"
     ]
+    
+    # Supported video formats (audio will be extracted)
+    supported_video_formats: list[str] = [
+        "mp4", "mkv", "avi", "mov", "wmv", "flv", "webm", "mpeg", "mpg", "3gp"
+    ]
+    
+    @property
+    def supported_media_formats(self) -> list[str]:
+        """All supported formats (audio + video)."""
+        return self.supported_audio_formats + self.supported_video_formats
 
     # Sub-configs
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)

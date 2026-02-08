@@ -102,6 +102,71 @@ class AudioChunker:
         except Exception as e:
             raise ChunkingError(f"Failed to get audio metadata: {e}")
 
+    async def extract_audio_from_video(
+        self,
+        video_path: str,
+        output_path: str | None = None,
+    ) -> str:
+        """Extract audio from video file using FFmpeg.
+
+        Args:
+            video_path: Path to video file
+            output_path: Optional output path (will use temp file if not provided)
+
+        Returns:
+            Path to the extracted audio file (WAV format)
+        """
+        try:
+            # Determine output path
+            if output_path is None:
+                output_dir = Path(video_path).parent
+                output_path = str(output_dir / f"{Path(video_path).stem}_audio.wav")
+
+            logger.info(
+                "Extracting audio from video",
+                video_path=video_path,
+                output_path=output_path,
+            )
+
+            # Extract audio using FFmpeg
+            # -vn: no video, -acodec pcm_s16le: 16-bit PCM, -ar 16000: 16kHz sample rate
+            stream = ffmpeg.input(video_path)
+            stream = ffmpeg.output(
+                stream,
+                output_path,
+                vn=None,  # No video
+                acodec='pcm_s16le',  # 16-bit WAV
+                ar=16000,  # 16kHz sample rate (optimal for speech)
+                ac=1,  # Mono
+            )
+            stream = ffmpeg.overwrite_output(stream)
+
+            await asyncio.to_thread(ffmpeg.run, stream, quiet=True)
+
+            # Verify output file exists and has content
+            if not os.path.exists(output_path):
+                raise ChunkingError("Audio extraction failed: output file not created")
+
+            output_size = os.path.getsize(output_path)
+            if output_size == 0:
+                raise ChunkingError("Audio extraction failed: output file is empty")
+
+            logger.info(
+                "Audio extracted successfully",
+                output_path=output_path,
+                output_size=output_size,
+            )
+
+            return output_path
+
+        except ffmpeg.Error as e:
+            error_msg = e.stderr.decode() if e.stderr else str(e)
+            raise ChunkingError(f"Failed to extract audio from video: {error_msg}")
+        except Exception as e:
+            if isinstance(e, ChunkingError):
+                raise
+            raise ChunkingError(f"Failed to extract audio from video: {e}")
+
     async def detect_silence_points(
         self,
         file_path: str,

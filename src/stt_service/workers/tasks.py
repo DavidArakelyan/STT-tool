@@ -113,6 +113,24 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                 # Check if we need chunking
                 logger.info("="*50 + "\n>>> STAGE: AUDIO CHUNKER <<<\n" + "="*50)
                 chunker = AudioChunker()
+
+                # Check if this is a video file that needs audio extraction
+                file_extension = os.path.splitext(job.original_filename or "")[1].lower().lstrip(".")
+                if file_extension in settings.supported_video_formats:
+                    logger.info("="*50 + "\n>>> STAGE: VIDEO PREPROCESSING <<<\n" + "="*50)
+                    logger.info(
+                        "Video file detected, extracting audio",
+                        original_filename=job.original_filename,
+                        extension=file_extension,
+                    )
+                    # Update job status to show preprocessing
+                    extracted_audio_path = os.path.join(temp_dir, "extracted_audio.wav")
+                    audio_path = await chunker.extract_audio_from_video(audio_path, extracted_audio_path)
+                    logger.info(
+                        "Audio extraction completed",
+                        extracted_path=audio_path,
+                    )
+
                 metadata = await chunker.get_audio_metadata(audio_path)
 
                 if metadata.duration <= settings.chunking.max_chunk_duration:

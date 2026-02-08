@@ -269,11 +269,13 @@ function initDropzone() {
 let selectedFile = null;
 
 function handleFileSelect(file) {
-    const validExtensions = ['mp3', 'wav', 'm4a', 'flac', 'ogg', 'webm', 'aac', 'wma', 'opus'];
+    const audioExtensions = ['mp3', 'wav', 'm4a', 'flac', 'ogg', 'webm', 'aac', 'wma', 'opus'];
+    const videoExtensions = ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'mpeg', 'mpg', '3gp'];
+    const validExtensions = [...audioExtensions, ...videoExtensions];
     const ext = file.name.split('.').pop().toLowerCase();
 
     if (!validExtensions.includes(ext)) {
-        showToast('Invalid file format. Please upload a supported audio file.', 'error');
+        showToast('Invalid file format. Please upload a supported audio or video file.', 'error');
         return;
     }
 

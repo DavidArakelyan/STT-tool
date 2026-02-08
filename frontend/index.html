@@ -65,11 +65,14 @@
             <div class="dropzone" id="dropzone">
                 <div class="dropzone-content">
                     <span class="dropzone-icon">📁</span>
-                    <p>Drag and drop audio file here</p>
+                    <p>Drag and drop audio or video file here</p>
                     <p class="dropzone-hint">or click to browse</p>
-                    <p class="supported-formats">Supported: mp3, wav, m4a, flac, ogg, webm, aac, wma, opus</p>
+                    <p class="supported-formats">Audio: mp3, wav, m4a, flac, ogg, aac, wma, opus | Video: mp4, mkv, avi,
+                        mov, webm</p>
                 </div>
-                <input type="file" id="fileInput" accept=".mp3,.wav,.m4a,.flac,.ogg,.webm,.aac,.wma,.opus" hidden>
+                <input type="file" id="fileInput"
+                    accept=".mp3,.wav,.m4a,.flac,.ogg,.webm,.aac,.wma,.opus,.mp4,.mkv,.avi,.mov,.wmv,.flv,.mpeg,.mpg,.3gp"
+                    hidden>
             </div>
 
             <div class="selected-file-card" id="selectedFile" style="display: none;">

@@ -48,8 +48,8 @@ async def submit_transcription(
     filename = audio.filename or "audio.mp3"
     extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
-    if extension not in settings.supported_audio_formats:
-        raise InvalidAudioFormatError(extension, settings.supported_audio_formats)
+    if extension not in settings.supported_media_formats:
+        raise InvalidAudioFormatError(extension, settings.supported_media_formats)
 
     # Read and validate file size
     audio_data = await audio.read()
@@ -131,8 +131,8 @@ async def submit_transcription_url(
     filename = request.audio_url.split("/")[-1].split("?")[0] or "audio.mp3"
     extension = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
-    if extension not in settings.supported_audio_formats:
-        raise InvalidAudioFormatError(extension, settings.supported_audio_formats)
+    if extension not in settings.supported_media_formats:
+        raise InvalidAudioFormatError(extension, settings.supported_media_formats)
 
     # Create job
     job_id = await orchestrator.create_job(
