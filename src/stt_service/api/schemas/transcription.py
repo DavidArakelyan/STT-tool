@@ -169,7 +169,7 @@ class Transcript(BaseModel):
     """Structured transcript with diarization."""
 
     # Full text without speaker labels
-    full_text: str
+    text: str
 
     # Segments with speaker labels and timestamps
     segments: list[TranscriptSegment]

@@ -256,7 +256,7 @@ async def get_job_result(
     result = job.result
 
     transcript = Transcript(
-        full_text=result.get("full_text", ""),
+        text=result.get("text", result.get("full_text", "")),
         segments=[
             TranscriptSegment(
                 speaker_id=s.get("speaker_id", "SPEAKER_00"),
@@ -327,9 +327,9 @@ async def download_bundle(
          raise HTTPException(status_code=500, detail=f"Failed to retrieve audio: {e}")
 
     # 2. Get Transcript Text
-    transcript_text = job.result.get("full_text", "")
+    transcript_text = job.result.get("text", job.result.get("full_text", ""))
     if not transcript_text:
-        # Fallback to segments if full_text missing
+        # Fallback to segments if text missing
         segments = job.result.get("segments", [])
         transcript_text = "\n".join([s.get("text", "") for s in segments])
 

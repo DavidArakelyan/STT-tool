@@ -349,7 +349,6 @@ async def _process_single_chunk(
     # Convert to dict for storage
     return {
         "text": result.text,
-        "full_text": result.text,  # Alias for debug/intermediate JSON
         "segments": [
             {
                 "text": s.text,

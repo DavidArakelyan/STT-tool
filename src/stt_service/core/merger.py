@@ -55,11 +55,11 @@ class TranscriptMerger:
             chunk_infos: List of chunk metadata with timing info
 
         Returns:
-            Merged transcript dict with full_text, segments, and speakers
+            Merged transcript dict with text, segments, and speakers
         """
         if not chunk_results:
             return {
-                "full_text": "",
+                "text": "",
                 "segments": [],
                 "speakers": [],
                 "warnings": ["No transcription results to merge"],
@@ -97,7 +97,7 @@ class TranscriptMerger:
 
         # Format output
         return {
-            "full_text": full_text,
+            "text": full_text,
             "segments": [
                 {
                     "speaker_id": s.speaker_id,
@@ -145,7 +145,7 @@ class TranscriptMerger:
             })
 
         return {
-            "full_text": full_text,
+            "text": full_text,
             "segments": normalized_segments,
             "speakers": self._compute_speaker_stats_from_dicts(normalized_segments),
             "metadata": {"chunks_merged": 1, "total_segments": len(normalized_segments)},

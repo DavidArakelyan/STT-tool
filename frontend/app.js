@@ -952,7 +952,7 @@ async function downloadResult(jobId) {
         }
 
         const result = await response.json();
-        const text = result.transcript.full_text;
+        const text = result.transcript.text || result.transcript.full_text;
 
         const filename = getDownloadFilename(result);
         downloadTextFile(text, filename);
@@ -1006,7 +1006,7 @@ function showResultModal(result) {
         </div>
     `;
 
-    textarea.value = result.transcript.full_text;
+    textarea.value = result.transcript.text || result.transcript.full_text;
     modal.classList.add('open');
 }
 
@@ -1038,7 +1038,7 @@ function downloadTranscript() {
         return;
     }
 
-    const text = currentTranscript.transcript.full_text;
+    const text = currentTranscript.transcript.text || currentTranscript.transcript.full_text;
     if (!text) {
         showToast('Transcript is empty', 'warning');
         return; // Early return if empty
