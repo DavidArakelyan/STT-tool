@@ -279,7 +279,10 @@ class GeminiProvider(BaseSTTProvider):
                 f"The conversation was already in progress. Here is the recent transcript for context:\n"
                 f"---\n{config.previous_transcript_context}\n---\n"
                 f"Continue transcribing from where this left off. Maintain speaker consistency with the context above.\n"
-                f"**CRITICAL: DO NOT REPEAT the context provided above. Start transcribing ONLY the new audio.**"
+                f"**IMPORTANT: The audio may start with content already captured in the context above — "
+                f"this is intentional overlap for continuity. Transcribe ALL audio content "
+                f"from the very beginning of this clip (timestamp 0.0). The system will "
+                f"automatically handle any overlap during merging.**"
             )
             if config.previous_speakers:
                 speakers_str = ", ".join(config.previous_speakers)

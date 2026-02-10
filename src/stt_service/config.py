@@ -127,7 +127,7 @@ class ChunkingSettings(BaseSettings):
 
     # Overlap settings for context-aware stitching
     overlap_enabled: bool = True  # Enable overlapping chunks for better stitching
-    overlap_duration: float = 3.0  # 3 seconds overlap between chunks
+    overlap_duration: float = 5.0  # 5 seconds overlap between chunks (increased from 3.0)
     overlap_similarity_threshold: float = 0.8  # Similarity threshold for deduplication (increased from 0.7)
 
     # Context injection settings

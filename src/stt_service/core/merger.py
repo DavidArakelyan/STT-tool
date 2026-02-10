@@ -223,11 +223,12 @@ class TranscriptMerger:
                 # Different text in overlap - might be different speaker
                 # Truncate the previous segment
                 if seg.start_time > prev.start_time:
-                    logger.debug(
+                    logger.warning(
                         "Truncating overlapping segment", 
-                        prev_end=prev.end_time,
-                        new_end=seg.start_time,
-                        next_start=seg.start_time
+                        speaker_id=prev.speaker_id,
+                        prev_text=prev.text[-30:],
+                        next_text=seg.text[:30],
+                        truncated_duration=prev.end_time - seg.start_time
                     )
                     result[-1] = MergedSegment(
                         speaker_id=prev.speaker_id,
