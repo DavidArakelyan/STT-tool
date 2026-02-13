@@ -85,10 +85,17 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
 
 async def init_db() -> None:
     """Initialize database (create tables if needed)."""
+    from sqlalchemy import text
+
     from stt_service.db.models import Base
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        # Add columns that may be missing from older schemas
+        await conn.execute(text(
+            "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS error_code VARCHAR(50)"
+        ))
 
 
 async def close_db() -> None:

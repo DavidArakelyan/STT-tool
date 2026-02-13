@@ -72,6 +72,7 @@ async def list_jobs(
                 updated_at=job.updated_at,
                 completed_at=job.completed_at,
                 error_message=job.error_message,
+                error_code=job.error_code,
             )
             for job in jobs
         ],
@@ -103,6 +104,7 @@ async def get_job(
         updated_at=job.updated_at,
         completed_at=job.completed_at,
         error_message=job.error_message,
+        error_code=job.error_code,
     )
 
 

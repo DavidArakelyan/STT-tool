@@ -185,6 +185,13 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
+    # Rate limiting (requests per minute per API key on /transcribe)
+    rate_limit_rpm: int = 10
+
+    # Job retention (days). Completed/failed jobs older than this are cleaned up.
+    # Set to 0 to disable automatic cleanup.
+    job_retention_days: int = 7
+
     # File upload limits
     max_upload_size: int = 500 * 1024 * 1024  # 500MB
 

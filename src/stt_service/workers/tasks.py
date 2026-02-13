@@ -22,6 +22,7 @@ from stt_service.providers import TranscriptionConfig, get_provider
 from stt_service.services.rate_limiter import setup_default_limits
 from stt_service.services.storage import storage_service
 from stt_service.workers.celery_app import celery_app
+from stt_service.utils.error_classifier import classify_error
 from stt_service.utils.exceptions import JobCancelledError, JobNotFoundError, ProviderError
 
 logger = structlog.get_logger()
@@ -346,26 +347,37 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
             return {"job_id": job_id, "status": "cancelled", "reason": str(e)}
 
         except Exception as e:
-            logger.error("Transcription job failed", job_id=job_id, error=str(e))
+            error_code, user_message = classify_error(e)
+            logger.error(
+                "Transcription job failed",
+                job_id=job_id,
+                error=str(e),
+                error_code=error_code,
+            )
 
             # --- DB Operation: Mark job as FAILED ---
             try:
                 async with get_db_context() as session:
                     job_repo = JobRepository(session)
-                    await job_repo.update_status(job_id, JobStatus.FAILED, error_message=str(e))
+                    await job_repo.update_status(
+                        job_id,
+                        JobStatus.FAILED,
+                        error_message=user_message,
+                        error_code=error_code,
+                    )
             except Exception as db_err:
                 logger.error("Failed to update job status to FAILED", job_id=job_id, db_error=str(db_err))
 
             # Check for non-retryable errors
             if isinstance(e, ProviderError) and not e.retryable:
-                logger.error("Non-retryable error encountered, failing job immediately", job_id=job_id, error=str(e))
-                return {"job_id": job_id, "status": "failed", "error": str(e), "retryable": False}
+                logger.error("Non-retryable error, failing job immediately", job_id=job_id, error_code=error_code)
+                return {"job_id": job_id, "status": "failed", "error": user_message, "error_code": error_code, "retryable": False}
 
             # Retry if possible
             if task.request.retries < task.max_retries:
                 raise task.retry(exc=e, countdown=60 * (task.request.retries + 1))
 
-            return {"job_id": job_id, "status": "failed", "error": str(e)}
+            return {"job_id": job_id, "status": "failed", "error": user_message, "error_code": error_code}
 
 
 async def _process_single_chunk(
@@ -759,3 +771,59 @@ async def _retry_failed_job(job_id: str) -> dict[str, Any]:
     process_transcription_job.delay(job_id)
 
     return {"status": "retrying", "reset_chunks": reset_count}
+
+
+@celery_app.task
+def cleanup_expired_jobs() -> dict[str, Any]:
+    """Delete completed/failed jobs older than the retention period."""
+    return run_async(_cleanup_expired_jobs())
+
+
+async def _cleanup_expired_jobs() -> dict[str, Any]:
+    """Async implementation of expired job cleanup."""
+    retention_days = settings.job_retention_days
+    if retention_days <= 0:
+        return {"status": "disabled"}
+
+    deleted_count = 0
+    s3_keys_deleted = 0
+
+    async with get_db_context() as session:
+        job_repo = JobRepository(session)
+        expired_jobs = await job_repo.get_expired_jobs(retention_days)
+
+        for job in expired_jobs:
+            # Collect S3 keys to delete
+            s3_keys: list[str] = []
+            if job.s3_original_key:
+                s3_keys.append(job.s3_original_key)
+            if job.s3_result_key:
+                s3_keys.append(job.s3_result_key)
+
+            # List and delete chunk files under jobs/{job_id}/
+            try:
+                prefix_files = await storage_service.list_files(f"jobs/{job.id}/")
+                s3_keys.extend(f["key"] for f in prefix_files)
+            except Exception as e:
+                logger.warning("Failed to list S3 files for cleanup", job_id=job.id, error=str(e))
+
+            # Delete S3 files
+            if s3_keys:
+                try:
+                    await storage_service.delete_files(list(set(s3_keys)))
+                    s3_keys_deleted += len(set(s3_keys))
+                except Exception as e:
+                    logger.warning("Failed to delete S3 files", job_id=job.id, error=str(e))
+
+            # Delete DB record (cascades to chunks)
+            await job_repo.delete(job.id)
+            deleted_count += 1
+
+    if deleted_count:
+        logger.info(
+            "Expired jobs cleaned up",
+            deleted_jobs=deleted_count,
+            s3_keys_deleted=s3_keys_deleted,
+        )
+
+    return {"deleted_jobs": deleted_count, "s3_keys_deleted": s3_keys_deleted}

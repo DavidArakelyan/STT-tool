@@ -38,14 +38,20 @@ celery_app.conf.update(
         "stt_service.workers.tasks.process_transcription_job": {"queue": "transcription"},
         "stt_service.workers.tasks.process_chunk": {"queue": "transcription"},
         "stt_service.workers.tasks.send_webhook": {"queue": "webhooks"},
+        "stt_service.workers.tasks.cleanup_expired_jobs": {"queue": "transcription"},
     },
     # Task retry settings
     task_default_retry_delay=60,
     task_max_retries=3,
     # Result settings
     result_expires=86400,  # 24 hours
-    # Beat schedule (if needed for periodic tasks)
-    beat_schedule={},
+    # Beat schedule for periodic tasks
+    beat_schedule={
+        "cleanup-expired-jobs": {
+            "task": "stt_service.workers.tasks.cleanup_expired_jobs",
+            "schedule": 86400.0,  # once per day (seconds)
+        },
+    },
 )
 
 # Auto-discover tasks

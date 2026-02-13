@@ -4,8 +4,9 @@ import hmac
 from collections.abc import AsyncGenerator
 from typing import Annotated
 
+import redis.asyncio as aioredis
 import structlog
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from stt_service.config import Settings, get_settings
@@ -63,6 +64,37 @@ async def get_chunk_repository(
     yield ChunkRepository(session)
 
 
+async def check_rate_limit(
+    request: Request,
+    api_key: str = Depends(verify_api_key),
+    settings: Settings = Depends(get_settings),
+) -> None:
+    """Enforce per-key rate limit on transcription submissions."""
+    rpm = settings.rate_limit_rpm
+    if rpm <= 0:
+        return  # disabled
+
+    key = f"ratelimit:{api_key}"
+    try:
+        r = aioredis.from_url(settings.redis.url)
+        try:
+            count = await r.incr(key)
+            if count == 1:
+                await r.expire(key, 60)  # 1 minute window
+            if count > rpm:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"Rate limit exceeded. Maximum {rpm} requests per minute.",
+                )
+        finally:
+            await r.aclose()
+    except HTTPException:
+        raise
+    except Exception as e:
+        # If Redis is down, allow the request (fail-open)
+        logger.warning("Rate limit check failed — allowing request", error=str(e))
+
+
 # Type aliases for cleaner dependency injection
 DBSession = Annotated[AsyncSession, Depends(get_db_session)]
 JobRepo = Annotated[JobRepository, Depends(get_job_repository)]
@@ -70,3 +102,4 @@ ChunkRepo = Annotated[ChunkRepository, Depends(get_chunk_repository)]
 Storage = Annotated[StorageService, Depends(get_storage)]
 APIKey = Annotated[str, Depends(verify_api_key)]
 AppSettings = Annotated[Settings, Depends(get_settings)]
+RateLimit = Annotated[None, Depends(check_rate_limit)]

@@ -1,6 +1,6 @@
 """Job repository for database operations."""
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import func, select, update
@@ -95,12 +95,16 @@ class JobRepository:
         job_id: str,
         status: JobStatus,
         error_message: str | None = None,
+        error_code: str | None = None,
     ) -> Job:
         """Update job status."""
         updates: dict[str, Any] = {"status": status}
 
         if error_message:
             updates["error_message"] = error_message
+
+        if error_code:
+            updates["error_code"] = error_code
 
         if status == JobStatus.COMPLETED:
             updates["completed_at"] = datetime.utcnow()
@@ -203,6 +207,44 @@ class JobRepository:
         job = await self.get_by_id(job_id)
         await self.session.delete(job)
         await self.session.flush()
+
+    async def fail_stale_jobs(self, stale_minutes: int = 30) -> int:
+        """Mark long-running PROCESSING/UPLOADED jobs as FAILED.
+
+        Returns the number of jobs that were marked as failed.
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=stale_minutes)
+        stmt = (
+            update(Job)
+            .where(
+                Job.status.in_([JobStatus.PROCESSING, JobStatus.UPLOADED]),
+                Job.updated_at < cutoff,
+            )
+            .values(
+                status=JobStatus.FAILED,
+                error_message=(
+                    "Job timed out — likely interrupted by a service restart. "
+                    "Please resubmit."
+                ),
+            )
+        )
+        result = await self.session.execute(stmt)
+        await self.session.flush()
+        return result.rowcount
+
+    async def get_expired_jobs(self, retention_days: int, batch_size: int = 50) -> list[Job]:
+        """Return completed/failed jobs older than retention_days."""
+        cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+        query = (
+            select(Job)
+            .where(
+                Job.status.in_([JobStatus.COMPLETED, JobStatus.FAILED]),
+                Job.created_at < cutoff,
+            )
+            .limit(batch_size)
+        )
+        result = await self.session.execute(query)
+        return list(result.scalars().all())
 
     async def get_pending_chunks_count(self, job_id: str) -> int:
         """Get count of pending or failed chunks for a job."""

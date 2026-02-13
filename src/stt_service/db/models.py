@@ -88,6 +88,7 @@ class Job(Base):
     # Results
     result: Mapped[dict[str, Any] | None] = mapped_column(JSON)
     error_message: Mapped[str | None] = mapped_column(Text)
+    error_code: Mapped[str | None] = mapped_column(String(50))
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(

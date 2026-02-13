@@ -2,16 +2,17 @@
 
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
+from uuid import uuid4
 
 import structlog
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from stt_service.api.routes import health, jobs, transcription, settings as settings_api
 from stt_service.config import get_settings
-from stt_service.db.session import close_db, init_db
+from stt_service.db.session import async_session_factory, close_db, init_db
 from stt_service.services.storage import storage_service
 from stt_service.utils.logging_config import configure_logging
 
@@ -47,6 +48,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except Exception as e:
         logger.warning("Storage bucket check failed", error=str(e))
 
+    # Recover stale jobs left in PROCESSING/UPLOADED from a previous crash
+    try:
+        from stt_service.db.repositories.job import JobRepository
+
+        async with async_session_factory() as session:
+            repo = JobRepository(session)
+            failed_count = await repo.fail_stale_jobs(stale_minutes=30)
+            await session.commit()
+            if failed_count:
+                logger.warning("Recovered stale jobs on startup", failed_count=failed_count)
+    except Exception as e:
+        logger.warning("Stale job recovery failed", error=str(e))
+
     yield
 
     # Shutdown
@@ -74,6 +88,17 @@ def create_app() -> FastAPI:
         allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
         allow_headers=["X-API-Key", "Content-Type"],
     )
+
+    # Request-ID middleware — generates a unique ID per request,
+    # binds it to structlog context so every log line is traceable.
+    @app.middleware("http")
+    async def request_id_middleware(request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID") or str(uuid4())
+        structlog.contextvars.clear_contextvars()
+        structlog.contextvars.bind_contextvars(request_id=request_id)
+        response: Response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
 
     # Exception handlers
     @app.exception_handler(ValidationError)
