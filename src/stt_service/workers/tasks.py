@@ -1,6 +1,7 @@
 """Celery background tasks for transcription processing."""
 
 import asyncio
+import json
 import os
 import tempfile
 from typing import Any
@@ -59,7 +60,7 @@ def process_transcription_job(self, job_id: str) -> dict[str, Any]:
 async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
     """Async implementation of job processing."""
     setup_default_limits()
-    
+
     # Bind job_id to all logs in this task context
     structlog.contextvars.bind_contextvars(job_id=job_id)
 
@@ -67,71 +68,64 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
     with job_logging_context(job_id):
         logger.info("="*50 + "\n>>> STAGE: WORKER STARTED (Received from Redis) <<<\n" + "="*50)
 
-        async with get_db_context() as session:
-            job_repo = JobRepository(session)
-            chunk_repo = ChunkRepository(session)
-
         try:
-            # Get job
-            job = await job_repo.get_by_id(job_id, include_chunks=True)
+            # --- DB Operation 1: Load job and mark as processing ---
+            async with get_db_context() as session:
+                job_repo = JobRepository(session)
+                job = await job_repo.get_by_id(job_id, include_chunks=True)
 
-            if job.status not in [JobStatus.UPLOADED, JobStatus.PROCESSING]:
-                logger.warning("Job not in processable state", job_id=job_id, status=job.status)
-                return {"job_id": job_id, "status": str(job.status)}
+                if job.status not in [JobStatus.UPLOADED, JobStatus.PROCESSING]:
+                    logger.warning("Job not in processable state", job_id=job_id, status=job.status)
+                    return {"job_id": job_id, "status": str(job.status)}
 
-            # Update status to processing
-            await job_repo.update_status(job_id, JobStatus.PROCESSING)
-            await session.commit()  # Commit to show "processing" status in UI
+                await job_repo.update_status(job_id, JobStatus.PROCESSING)
 
-            # Debug: log job attributes
+                # Capture all needed data before session closes
+                job_config = job.config or {}
+                job_provider = job.provider
+                job_s3_key = job.s3_original_key
+                job_original_filename = job.original_filename
+                job_duration_seconds = job.duration_seconds
+                job_webhook_url = job.webhook_url
+                job_has_chunks = bool(job.chunks)
+
+            # Log job attributes (no DB needed)
+            provider_name = job_provider or job_config.get("provider", "gemini")
             logger.info(
                 "Job loaded",
                 job_id=job_id,
-                job_config_type=type(job.config).__name__,
-                job_config=job.config,
-                job_provider=job.provider,
+                job_config_type=type(job_config).__name__,
+                job_config=job_config,
+                job_provider=job_provider,
             )
-
-            config = job.config or {}
-            provider_name = job.provider or config.get("provider", "gemini")
-
             logger.info(
                 "Starting transcription job",
                 job_id=job_id,
                 provider=provider_name,
-                duration=job.duration_seconds,
+                duration=job_duration_seconds,
             )
 
-            # Download audio file
+            # Download audio file (no DB needed)
             with tempfile.TemporaryDirectory() as temp_dir:
                 audio_path = os.path.join(temp_dir, "audio")
-                await storage_service.download_file_to_path(
-                    job.s3_original_key,
-                    audio_path,
-                )
+                await storage_service.download_file_to_path(job_s3_key, audio_path)
 
-                # Check if we need chunking
+                # Chunking stage (no DB needed)
                 logger.info("="*50 + "\n>>> STAGE: AUDIO CHUNKER <<<\n" + "="*50)
                 chunker = AudioChunker()
 
-                # Check if this is a video file that needs audio extraction
-                file_extension = os.path.splitext(job.original_filename or "")[1].lower().lstrip(".")
+                file_extension = os.path.splitext(job_original_filename or "")[1].lower().lstrip(".")
                 if file_extension in settings.supported_video_formats:
                     logger.info("="*50 + "\n>>> STAGE: VIDEO PREPROCESSING <<<\n" + "="*50)
                     logger.info(
                         "Video file detected, extracting audio",
-                        original_filename=job.original_filename,
+                        original_filename=job_original_filename,
                         extension=file_extension,
                     )
-                    # Update job status to show preprocessing
                     extracted_audio_path = os.path.join(temp_dir, "extracted_audio.wav")
                     audio_path = await chunker.extract_audio_from_video(audio_path, extracted_audio_path)
-                    logger.info(
-                        "Audio extraction completed",
-                        extracted_path=audio_path,
-                    )
+                    logger.info("Audio extraction completed", extracted_path=audio_path)
                 else:
-                    # Normalize audio to WAV 16kHz mono for consistent processing
                     logger.info("Normalizing audio to WAV", original_format=file_extension)
                     wav_path = os.path.join(temp_dir, "normalized_audio.wav")
                     audio_path = await chunker.convert_to_wav(audio_path, wav_path)
@@ -139,7 +133,6 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                 metadata = await chunker.get_audio_metadata(audio_path)
 
                 if metadata.duration <= settings.chunking.max_chunk_duration:
-                    # Single chunk processing
                     chunks = [
                         ChunkInfo(
                             index=0,
@@ -150,49 +143,49 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                         )
                     ]
                 else:
-                    # Multi-chunk processing
                     chunks = await chunker.chunk_audio(audio_path, temp_dir)
 
-                # Create chunk records if not exists
-                if not job.chunks:
+                # --- DB Operation 2: Create chunk records ---
+                if not job_has_chunks:
                     chunks_data = [
                         {
                             "chunk_index": c.index,
                             "start_time": c.start_time,
                             "end_time": c.end_time,
-                            "s3_chunk_key": None,  # We'll process locally
+                            "s3_chunk_key": None,
                         }
                         for c in chunks
                     ]
-                    await chunk_repo.create_many(job_id, chunks_data)
-                    await job_repo.update_chunk_counts(job_id, total_chunks=len(chunks))
-                    await session.commit()  # Commit to make chunks visible in UI
+                    async with get_db_context() as session:
+                        chunk_repo = ChunkRepository(session)
+                        await chunk_repo.create_many(job_id, chunks_data)
+                        await JobRepository(session).update_chunk_counts(job_id, total_chunks=len(chunks))
 
-                # Process chunks
+                # Process chunks (provider API calls — the expensive part)
                 logger.info("="*50 + f"\n>>> STAGE: PROVIDER PROCESSING ({provider_name.upper()}) <<<\n" + "="*50)
                 provider = get_provider(provider_name)
-                base_config = _build_transcription_config(config)
+                base_config = _build_transcription_config(job_config)
                 results = []
 
                 for chunk in chunks:
-                    chunk_record = await chunk_repo.get_by_job_and_index(job_id, chunk.index)
-                    if chunk_record and chunk_record.status == ChunkStatus.COMPLETED:
-                        # Skip already completed chunks
-                        results.append(chunk_record.result)
-                        continue
+                    # --- DB Operation 3: Check chunk status ---
+                    chunk_record_id = None
+                    async with get_db_context() as session:
+                        chunk_repo = ChunkRepository(session)
+                        chunk_record = await chunk_repo.get_by_job_and_index(job_id, chunk.index)
+                        if chunk_record and chunk_record.status == ChunkStatus.COMPLETED:
+                            results.append(chunk_record.result)
+                            continue
+                        if chunk_record:
+                            chunk_record_id = chunk_record.id
+                            await chunk_repo.mark_processing(chunk_record_id)
 
-                    # Mark as processing
-                    if chunk_record:
-                        await chunk_repo.mark_processing(chunk_record.id)
-                        await session.commit()  # Commit to show "processing" status
-
-                    # Build chunk-specific config with context from previous chunks
+                    # Build chunk-specific config with context (no DB needed)
                     context_text, known_speakers = _extract_context_from_results(
                         results,
                         num_segments=settings.chunking.context_segments,
                     )
 
-                    # Create config with context for this chunk
                     chunk_config = TranscriptionConfig(
                         language=base_config.language,
                         additional_languages=base_config.additional_languages,
@@ -219,15 +212,15 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                             known_speakers=known_speakers,
                         )
 
-                    # Transcribe chunk
+                    # Transcribe chunk (expensive provider API call — no DB held)
                     try:
-                        # Define retry callback to check for cancellation
                         async def on_retry_check(attempt, exc, delay):
-                            job = await job_repo.get_by_id_or_none(job_id)
-                            if not job:
+                            async with get_db_context() as retry_session:
+                                retry_job = await JobRepository(retry_session).get_by_id_or_none(job_id)
+                            if not retry_job:
                                 raise JobCancelledError(f"Job {job_id} not found (deleted)")
-                            if job.status not in [JobStatus.UPLOADED, JobStatus.PROCESSING]:
-                                raise JobCancelledError(f"Job {job_id} status is {job.status}")
+                            if retry_job.status not in [JobStatus.UPLOADED, JobStatus.PROCESSING]:
+                                raise JobCancelledError(f"Job {job_id} status is {retry_job.status}")
 
                         result = await _process_single_chunk(
                             provider,
@@ -274,16 +267,16 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                                     gap_seconds=coverage_gap,
                                 )
 
-                        # Store result
-                        if chunk_record:
-                            await chunk_repo.set_result(chunk_record.id, result)
-                            await job_repo.increment_completed_chunks(job_id)
-                            await session.commit()  # Commit progress after each chunk
+                        # --- DB Operation 4: Store chunk result ---
+                        if chunk_record_id:
+                            async with get_db_context() as session:
+                                chunk_repo = ChunkRepository(session)
+                                await chunk_repo.set_result(chunk_record_id, result)
+                                await JobRepository(session).increment_completed_chunks(job_id)
 
                         results.append(result)
 
-                        # Save individual chunk JSON for debugging
-                        import json
+                        # Save individual chunk JSON for debugging (no DB needed)
                         log_dir = f"logs/jobs/{job_id}"
                         os.makedirs(log_dir, exist_ok=True)
                         chunk_debug_path = os.path.join(log_dir, f"chunk-{chunk.index:04d}.json")
@@ -301,17 +294,17 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                             chunk_index=chunk.index,
                             error=str(e),
                         )
-                        if chunk_record:
-                            await chunk_repo.update_status(
-                                chunk_record.id,
-                                ChunkStatus.FAILED,
-                                error=str(e),
-                            )
-                            await session.commit()  # Commit error status
+                        if chunk_record_id:
+                            async with get_db_context() as session:
+                                chunk_repo = ChunkRepository(session)
+                                await chunk_repo.update_status(
+                                    chunk_record_id,
+                                    ChunkStatus.FAILED,
+                                    error=str(e),
+                                )
                         raise
 
-                # Save intermediate combined JSON for debugging
-                import json
+                # Save intermediate combined JSON for debugging (no DB needed)
                 log_dir = f"logs/jobs/{job_id}"
                 os.makedirs(log_dir, exist_ok=True)
                 combined_debug_path = os.path.join(log_dir, "combined_transcript.json")
@@ -322,24 +315,25 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                 except Exception as e:
                     logger.error("Failed to save intermediate transcript", error=str(e))
 
-                # Merge results
+                # Merge results (no DB needed)
                 logger.info("="*50 + "\n>>> STAGE: TRANSCRIPT MERGER <<<\n" + "="*50)
                 merger = TranscriptMerger()
                 final_transcript = merger.merge_transcripts(results, chunks)
 
-                # Store final result
+                # --- DB Operation 5: Store final result ---
                 logger.info("="*50 + "\n>>> STAGE: DB & STORAGE PERSISTENCE <<<\n" + "="*50)
                 result_key = storage_service.generate_result_key(job_id)
                 await storage_service.upload_json(result_key, final_transcript)
 
-                await job_repo.set_result(job_id, final_transcript, result_key)
-                await session.commit()  # Explicitly commit the final state
+                async with get_db_context() as session:
+                    job_repo = JobRepository(session)
+                    await job_repo.set_result(job_id, final_transcript, result_key)
 
                 logger.info("Transcription job completed", job_id=job_id)
 
                 # Send webhook if configured
-                if job.webhook_url:
-                    send_webhook.delay(job_id, job.webhook_url)
+                if job_webhook_url:
+                    send_webhook.delay(job_id, job_webhook_url)
 
                 return {
                     "job_id": job_id,
@@ -353,13 +347,18 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
 
         except Exception as e:
             logger.error("Transcription job failed", job_id=job_id, error=str(e))
-            await job_repo.update_status(job_id, JobStatus.FAILED, error_message=str(e))
+
+            # --- DB Operation: Mark job as FAILED ---
+            try:
+                async with get_db_context() as session:
+                    job_repo = JobRepository(session)
+                    await job_repo.update_status(job_id, JobStatus.FAILED, error_message=str(e))
+            except Exception as db_err:
+                logger.error("Failed to update job status to FAILED", job_id=job_id, db_error=str(db_err))
 
             # Check for non-retryable errors
             if isinstance(e, ProviderError) and not e.retryable:
                 logger.error("Non-retryable error encountered, failing job immediately", job_id=job_id, error=str(e))
-                # Explicitly commit the failed status to ensure UI updates immediately
-                await session.commit()
                 return {"job_id": job_id, "status": "failed", "error": str(e), "retryable": False}
 
             # Retry if possible
@@ -467,8 +466,8 @@ def _extract_context_from_results(
     # Take last N segments for context
     context_segments = all_segments[-num_segments:]
     logger.debug(
-        "Extracting context", 
-        total_segments_available=len(all_segments), 
+        "Extracting context",
+        total_segments_available=len(all_segments),
         segments_used=len(context_segments),
         speakers_found=list(all_speakers)
     )
@@ -545,101 +544,118 @@ def process_chunk(
 async def _process_chunk(task, job_id: str, chunk_index: int) -> dict[str, Any]:
     """Async implementation of single chunk processing."""
     setup_default_limits()
-    
+
     # Bind context for chunk logs
     structlog.contextvars.bind_contextvars(job_id=job_id, chunk_index=chunk_index)
 
-    async with get_db_context() as session:
-        job_repo = JobRepository(session)
-        chunk_repo = ChunkRepository(session)
+    chunk_record_id = None
 
-        try:
+    try:
+        # --- DB Operation 1: Load job and chunk data ---
+        async with get_db_context() as session:
+            job_repo = JobRepository(session)
+            chunk_repo = ChunkRepository(session)
+
             job = await job_repo.get_by_id(job_id)
-            chunk = await chunk_repo.get_by_job_and_index(job_id, chunk_index)
+            chunk_record = await chunk_repo.get_by_job_and_index(job_id, chunk_index)
 
-            if not chunk:
+            if not chunk_record:
                 raise ValueError(f"Chunk not found: job={job_id}, index={chunk_index}")
 
-            if chunk.status == ChunkStatus.COMPLETED:
-                return chunk.result
+            if chunk_record.status == ChunkStatus.COMPLETED:
+                return chunk_record.result
 
-            # Mark as processing
-            await chunk_repo.mark_processing(chunk.id)
+            # Capture needed data before session closes
+            chunk_record_id = chunk_record.id
+            chunk_s3_key = chunk_record.s3_chunk_key
+            chunk_start_time = chunk_record.start_time
+            chunk_end_time = chunk_record.end_time
+            job_provider = job.provider
+            job_config = job.config
 
-            # Download chunk audio
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-                temp_path = f.name
-                await storage_service.download_file_to_path(chunk.s3_chunk_key, temp_path)
+        # --- DB Operation 2: Mark chunk as processing ---
+        async with get_db_context() as session:
+            chunk_repo = ChunkRepository(session)
+            await chunk_repo.mark_processing(chunk_record_id)
 
-            try:
-                provider_name = job.provider or job.config.get("provider", "gemini")
-                provider = get_provider(provider_name)
-                config = _build_transcription_config(job.config)
+        # Download chunk audio (no DB needed)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            temp_path = f.name
+            await storage_service.download_file_to_path(chunk_s3_key, temp_path)
 
-                chunk_info = ChunkInfo(
-                    index=chunk_index,
-                    start_time=chunk.start_time,
-                    end_time=chunk.end_time,
-                    duration=chunk.end_time - chunk.start_time,
-                    file_path=temp_path,
-                )
-                
-                # inject duration into config
-                config.audio_duration = chunk_info.duration
+        try:
+            provider_name = job_provider or job_config.get("provider", "gemini")
+            provider = get_provider(provider_name)
+            config = _build_transcription_config(job_config)
 
-                # Define retry callback
-                async def on_retry_check(attempt, exc, delay):
-                    job_check = await job_repo.get_by_id_or_none(job_id)
-                    if not job_check:
-                        raise JobCancelledError(f"Job {job_id} not found (deleted)")
-                    
-                    # Also check chunk status?
-                    chunk_check = await chunk_repo.get_by_job_and_index(job_id, chunk_index)
-                    if not chunk_check or chunk_check.status == ChunkStatus.FAILED:
-                         # If manually marked failed/deleted
-                         raise JobCancelledError(f"Chunk {chunk_index} cancelled")
-
-                result = await _process_single_chunk(
-                    provider, chunk_info, config, provider_name, on_retry=on_retry_check
-                )
-
-                await chunk_repo.set_result(chunk.id, result)
-                await job_repo.increment_completed_chunks(job_id)
-
-                return result
-
-            finally:
-                if os.path.exists(temp_path):
-                    os.unlink(temp_path)
-
-        except (JobCancelledError, JobNotFoundError) as e:
-             logger.warning("Chunk cancelled or deleted, aborting", job_id=job_id, chunk_index=chunk_index)
-             # Do NOT raise retry, just exit
-             return {"status": "cancelled", "reason": str(e)}
-
-        except Exception as e:
-            logger.error(
-                "Chunk processing failed",
-                job_id=job_id,
-                chunk_index=chunk_index,
-                error=str(e),
+            chunk_info = ChunkInfo(
+                index=chunk_index,
+                start_time=chunk_start_time,
+                end_time=chunk_end_time,
+                duration=chunk_end_time - chunk_start_time,
+                file_path=temp_path,
             )
 
-            if chunk:
-                await chunk_repo.update_status(chunk.id, ChunkStatus.FAILED, error=str(e))
+            # inject duration into config
+            config.audio_duration = chunk_info.duration
 
-            # Check for non-retryable errors
-            if isinstance(e, ProviderError) and not e.retryable:
-                 logger.error("Non-retryable error encountered, failing chunk immediately", job_id=job_id, chunk_index=chunk_index, error=str(e))
-                 # We do NOT raise retry here. We raise the exception to propagate failure or just return failed status
-                 # If we raise, the caller (if task chain) handles it.
-                 # Given this is a task, raising without retry marks task as FAILED.
-                 raise e
+            # Define retry callback with its own session
+            async def on_retry_check(attempt, exc, delay):
+                async with get_db_context() as retry_session:
+                    job_check = await JobRepository(retry_session).get_by_id_or_none(job_id)
+                    chunk_check = await ChunkRepository(retry_session).get_by_job_and_index(job_id, chunk_index)
 
-            if task.request.retries < task.max_retries:
-                raise task.retry(exc=e, countdown=30 * (task.request.retries + 1))
+                if not job_check:
+                    raise JobCancelledError(f"Job {job_id} not found (deleted)")
+                if not chunk_check or chunk_check.status == ChunkStatus.FAILED:
+                    raise JobCancelledError(f"Chunk {chunk_index} cancelled")
 
-            raise
+            result = await _process_single_chunk(
+                provider, chunk_info, config, provider_name, on_retry=on_retry_check
+            )
+
+            # --- DB Operation 3: Save chunk result ---
+            async with get_db_context() as session:
+                chunk_repo = ChunkRepository(session)
+                await chunk_repo.set_result(chunk_record_id, result)
+                await JobRepository(session).increment_completed_chunks(job_id)
+
+            return result
+
+        finally:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
+
+    except (JobCancelledError, JobNotFoundError) as e:
+        logger.warning("Chunk cancelled or deleted, aborting", job_id=job_id, chunk_index=chunk_index)
+        return {"status": "cancelled", "reason": str(e)}
+
+    except Exception as e:
+        logger.error(
+            "Chunk processing failed",
+            job_id=job_id,
+            chunk_index=chunk_index,
+            error=str(e),
+        )
+
+        # --- DB Operation: Mark chunk as failed ---
+        if chunk_record_id:
+            try:
+                async with get_db_context() as session:
+                    chunk_repo = ChunkRepository(session)
+                    await chunk_repo.update_status(chunk_record_id, ChunkStatus.FAILED, error=str(e))
+            except Exception as db_err:
+                logger.error("Failed to update chunk status to FAILED", chunk_id=chunk_record_id, db_error=str(db_err))
+
+        # Check for non-retryable errors
+        if isinstance(e, ProviderError) and not e.retryable:
+            logger.error("Non-retryable error encountered, failing chunk immediately", job_id=job_id, chunk_index=chunk_index, error=str(e))
+            raise e
+
+        if task.request.retries < task.max_retries:
+            raise task.retry(exc=e, countdown=30 * (task.request.retries + 1))
+
+        raise
 
 
 @celery_app.task(bind=True, max_retries=5)
@@ -658,10 +674,10 @@ def send_webhook(self, job_id: str, webhook_url: str) -> dict[str, Any]:
 
 async def _send_webhook(task, job_id: str, webhook_url: str) -> dict[str, Any]:
     """Async implementation of webhook sending."""
-    async with get_db_context() as session:
-        job_repo = JobRepository(session)
-
-        try:
+    try:
+        # --- DB Operation 1: Load job data ---
+        async with get_db_context() as session:
+            job_repo = JobRepository(session)
             job = await job_repo.get_by_id(job_id)
 
             payload = {
@@ -671,32 +687,36 @@ async def _send_webhook(task, job_id: str, webhook_url: str) -> dict[str, Any]:
                 "completed_at": job.completed_at.isoformat() if job.completed_at else None,
             }
 
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    webhook_url,
-                    json=payload,
-                    timeout=30.0,
-                    headers={"Content-Type": "application/json"},
-                )
-                response.raise_for_status()
+        # Send HTTP request (no DB needed)
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                webhook_url,
+                json=payload,
+                timeout=30.0,
+                headers={"Content-Type": "application/json"},
+            )
+            response.raise_for_status()
 
+        # --- DB Operation 2: Mark webhook as sent ---
+        async with get_db_context() as session:
+            job_repo = JobRepository(session)
             await job_repo.mark_webhook_sent(job_id)
 
-            logger.info("Webhook sent", job_id=job_id, webhook_url=webhook_url)
-            return {"status": "sent", "status_code": response.status_code}
+        logger.info("Webhook sent", job_id=job_id, webhook_url=webhook_url)
+        return {"status": "sent", "status_code": response.status_code}
 
-        except Exception as e:
-            logger.error(
-                "Webhook failed",
-                job_id=job_id,
-                webhook_url=webhook_url,
-                error=str(e),
-            )
+    except Exception as e:
+        logger.error(
+            "Webhook failed",
+            job_id=job_id,
+            webhook_url=webhook_url,
+            error=str(e),
+        )
 
-            if task.request.retries < task.max_retries:
-                raise task.retry(exc=e, countdown=60 * (task.request.retries + 1))
+        if task.request.retries < task.max_retries:
+            raise task.retry(exc=e, countdown=60 * (task.request.retries + 1))
 
-            return {"status": "failed", "error": str(e)}
+        return {"status": "failed", "error": str(e)}
 
 
 @celery_app.task
@@ -735,7 +755,7 @@ async def _retry_failed_job(job_id: str) -> dict[str, Any]:
             reset_chunks=reset_count,
         )
 
-        # Trigger reprocessing
-        process_transcription_job.delay(job_id)
+    # Trigger reprocessing (outside session — just puts a message on Redis)
+    process_transcription_job.delay(job_id)
 
-        return {"status": "retrying", "reset_chunks": reset_count}
+    return {"status": "retrying", "reset_chunks": reset_count}
