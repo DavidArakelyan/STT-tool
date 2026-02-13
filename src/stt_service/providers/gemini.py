@@ -228,7 +228,15 @@ class GeminiProvider(BaseSTTProvider):
             raise ProviderError(
                 message=f"Gemini transcription failed: {error_msg}",
                 provider=self.name,
-                retryable="temporary" in error_lower or "unavailable" in error_lower,
+                retryable=(
+                    "temporary" in error_lower
+                    or "unavailable" in error_lower
+                    or "deadline" in error_lower
+                    or "timeout" in error_lower
+                    or "504" in error_lower
+                    or "503" in error_lower
+                    or "500" in error_lower
+                ),
             ) from e
 
     async def transcribe_file(
@@ -387,15 +395,35 @@ Output format (JSON):
 
                 segments_data = data.get("segments", [])
                 segments = []
+                overflow_count = 0
                 for seg in segments_data:
+                    start = float(seg.get("start", 0))
+                    end = float(seg.get("end", 0))
+
+                    # Clamp timestamps that overflow beyond the chunk duration
+                    if duration > 0 and end > duration:
+                        overflow_count += 1
+                        end = min(end, duration)
+                        start = min(start, duration)
+
                     segments.append(
                         TranscriptionSegment(
                             text=seg.get("text", "").strip(),
-                            start_time=float(seg.get("start", 0)),
-                            end_time=float(seg.get("end", 0)),
+                            start_time=start,
+                            end_time=end,
                             speaker_id=seg.get("speaker", "SPEAKER_00"),
                             confidence=seg.get("confidence"),
                         )
+                    )
+
+                if overflow_count > 0:
+                    logger.warning(
+                        "Clamped overflowing timestamps",
+                        overflow_segments=overflow_count,
+                        total_segments=len(segments),
+                        chunk_duration=duration,
+                        max_timestamp=max(float(s.get("end", 0)) for s in segments_data),
+                        chunk_index=config.chunk_index,
                     )
 
                 # Reconstruct full_text from segments (Gemini no longer provides it to save tokens)

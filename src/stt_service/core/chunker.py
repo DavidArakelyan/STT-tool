@@ -1,7 +1,6 @@
 """Audio chunking with FFmpeg for large file processing."""
 
 import asyncio
-import json
 import os
 import tempfile
 from dataclasses import dataclass
@@ -48,21 +47,15 @@ class AudioChunker:
         self,
         max_chunk_duration: float | None = None,
         overlap_duration: float | None = None,
-        silence_threshold_db: int | None = None,
-        min_silence_duration: float | None = None,
     ) -> None:
         """Initialize chunker with configuration.
 
         Args:
             max_chunk_duration: Maximum chunk duration in seconds
             overlap_duration: Overlap between chunks in seconds
-            silence_threshold_db: Silence detection threshold in dB
-            min_silence_duration: Minimum silence duration to detect
         """
         self.max_chunk_duration = max_chunk_duration or settings.chunking.max_chunk_duration
         self.overlap_duration = overlap_duration or settings.chunking.overlap_duration
-        self.silence_threshold_db = silence_threshold_db or settings.chunking.silence_threshold_db
-        self.min_silence_duration = min_silence_duration or settings.chunking.min_silence_duration
 
     async def get_audio_metadata(self, file_path: str) -> AudioMetadata:
         """Get audio file metadata using FFprobe.
@@ -167,125 +160,38 @@ class AudioChunker:
                 raise
             raise ChunkingError(f"Failed to extract audio from video: {e}")
 
-    async def detect_silence_points(
-        self,
-        file_path: str,
-        duration: float,
-    ) -> list[float]:
-        """Detect silence points in audio for smart splitting.
-
-        Args:
-            file_path: Path to audio file
-            duration: Total audio duration
-
-        Returns:
-            List of timestamps (in seconds) where silences occur
-        """
-        try:
-            # Use FFmpeg silence detection filter
-            cmd = (
-                ffmpeg
-                .input(file_path)
-                .filter("silencedetect", n=f"{self.silence_threshold_db}dB", d=self.min_silence_duration)
-                .output("-", format="null")
-            )
-
-            # Run FFmpeg and capture stderr (where silence info is logged)
-            process = await asyncio.to_thread(
-                lambda: cmd.run(capture_stdout=True, capture_stderr=True)
-            )
-            stderr = process[1].decode("utf-8")
-
-            # Parse silence end timestamps
-            silence_points = []
-            for line in stderr.split("\n"):
-                if "silence_end" in line:
-                    try:
-                        # Format: [silencedetect @ 0x...] silence_end: 123.456
-                        parts = line.split("silence_end:")
-                        if len(parts) > 1:
-                            timestamp = float(parts[1].split()[0])
-                            silence_points.append(timestamp)
-                    except (ValueError, IndexError):
-                        continue
-
-            return silence_points
-
-        except Exception as e:
-            logger.warning("Silence detection failed, using fixed intervals", error=str(e))
-            return []
-
     def calculate_chunk_boundaries(
         self,
         duration: float,
-        silence_points: list[float] | None = None,
     ) -> list[tuple[float, float]]:
-        """Calculate chunk boundaries based on duration and silence points.
+        """Calculate fixed-duration chunk boundaries with overlap.
 
         Args:
             duration: Total audio duration
-            silence_points: Optional list of silence timestamps
 
         Returns:
             List of (start_time, end_time) tuples
         """
         if duration <= self.max_chunk_duration:
-            # Single chunk for short audio
             return [(0.0, duration)]
 
         boundaries = []
         current_start = 0.0
 
         while current_start < duration:
-            # Target end time for this chunk
-            target_end = min(current_start + self.max_chunk_duration, duration)
+            chunk_end = min(current_start + self.max_chunk_duration, duration)
+            boundaries.append((current_start, chunk_end))
 
-            if target_end >= duration:
-                # Last chunk
-                boundaries.append((current_start, duration))
+            if chunk_end >= duration:
                 break
 
-            # Find best split point near target_end
-            if silence_points:
-                # Look for silence within 20% of target end
-                search_start = target_end * 0.8
-                search_end = target_end * 1.1
+            # Next chunk starts with overlap
+            current_start = chunk_end - self.overlap_duration
 
-                candidates = [
-                    sp for sp in silence_points
-                    if search_start <= sp <= min(search_end, duration)
-                ]
-
-                if candidates:
-                    # Use the silence point closest to target
-                    split_point = min(candidates, key=lambda x: abs(x - target_end))
-                else:
-                    split_point = target_end
-            else:
-                split_point = target_end
-
-            boundaries.append((current_start, split_point))
-
-            # Next chunk starts with overlap (if enabled)
-            # Next chunk starts with overlap (if enabled)
-            if settings.chunking.overlap_enabled:
-                next_start = max(0, split_point - self.overlap_duration)
-                logger.debug(
-                    "Calculated chunk boundary", 
-                    chunk_index=len(boundaries),
-                    start=current_start,
-                    end=split_point,
-                    next_start_overlap=next_start,
-                    overlap_duration=split_point - next_start
-                )
-                current_start = next_start
-            else:
-                current_start = split_point
-                
         logger.info(
-            "Chunk boundaries calculated", 
-            total_chunks=len(boundaries), 
-            overlap_enabled=settings.chunking.overlap_enabled
+            "Chunk boundaries calculated",
+            total_chunks=len(boundaries),
+            overlap_duration=self.overlap_duration,
         )
 
         return boundaries
@@ -321,13 +227,8 @@ class AudioChunker:
         else:
             os.makedirs(output_dir, exist_ok=True)
 
-        # Detect silence points for smart splitting
-        silence_points = await self.detect_silence_points(input_path, metadata.duration)
-        logger.info("Detected silence points", count=len(silence_points))
-
         # Calculate chunk boundaries
-        boundaries = self.calculate_chunk_boundaries(metadata.duration, silence_points)
-        logger.info("Calculated chunks", count=len(boundaries))
+        boundaries = self.calculate_chunk_boundaries(metadata.duration)
 
         # Create chunks
         chunks = []

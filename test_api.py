@@ -166,7 +166,7 @@ def test_transcription_with_sample():
 
     wav_data = create_test_wav()
     files = {"audio": ("test.wav", wav_data, "audio/wav")}
-    fields = {"config": '{"provider": "gemini", "language": "en"}'}
+    fields = {"config": '{"provider": "wav", "language": "ru"}'}
 
     status, data = make_multipart_request(
         "/api/v1/transcribe",

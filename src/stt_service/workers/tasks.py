@@ -130,6 +130,11 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                         "Audio extraction completed",
                         extracted_path=audio_path,
                     )
+                else:
+                    # Normalize audio to WAV 16kHz mono for consistent processing
+                    logger.info("Normalizing audio to WAV", original_format=file_extension)
+                    wav_path = os.path.join(temp_dir, "normalized_audio.wav")
+                    audio_path = await chunker.convert_to_wav(audio_path, wav_path)
 
                 metadata = await chunker.get_audio_metadata(audio_path)
 
@@ -232,6 +237,43 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                             on_retry=on_retry_check,
                         )
 
+                        # Validate coverage and retry if provider skipped audio
+                        coverage_gap = _check_coverage_gap(result, chunk)
+                        if coverage_gap and coverage_gap > 15.0:
+                            max_coverage_retries = 2
+                            for retry_num in range(max_coverage_retries):
+                                logger.warning(
+                                    "Coverage gap detected, retrying chunk",
+                                    chunk_index=chunk.index,
+                                    gap_seconds=coverage_gap,
+                                    retry=retry_num + 1,
+                                    max_retries=max_coverage_retries,
+                                )
+                                retry_result = await _process_single_chunk(
+                                    provider,
+                                    chunk,
+                                    chunk_config,
+                                    provider_name,
+                                    on_retry=on_retry_check,
+                                )
+                                retry_gap = _check_coverage_gap(retry_result, chunk)
+                                if retry_gap is None or retry_gap < coverage_gap:
+                                    result = retry_result
+                                    coverage_gap = retry_gap
+                                    if retry_gap is None or retry_gap <= 15.0:
+                                        logger.info(
+                                            "Coverage gap resolved after retry",
+                                            chunk_index=chunk.index,
+                                            retry=retry_num + 1,
+                                        )
+                                        break
+                            if coverage_gap and coverage_gap > 15.0:
+                                logger.error(
+                                    "Coverage gap persists after retries",
+                                    chunk_index=chunk.index,
+                                    gap_seconds=coverage_gap,
+                                )
+
                         # Store result
                         if chunk_record:
                             await chunk_repo.set_result(chunk_record.id, result)
@@ -316,6 +358,8 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
             # Check for non-retryable errors
             if isinstance(e, ProviderError) and not e.retryable:
                 logger.error("Non-retryable error encountered, failing job immediately", job_id=job_id, error=str(e))
+                # Explicitly commit the failed status to ensure UI updates immediately
+                await session.commit()
                 return {"job_id": job_id, "status": "failed", "error": str(e), "retryable": False}
 
             # Retry if possible
@@ -348,7 +392,11 @@ async def _process_single_chunk(
 
     # Convert to dict for storage
     return {
-        "text": result.text,
+        "chunk_index": chunk.index,
+        "chunk_start_time": chunk.start_time,
+        "chunk_end_time": chunk.end_time,
+        "language_detected": result.language_detected,
+        "chunk_full_text": result.text,
         "segments": [
             {
                 "text": s.text,
@@ -359,9 +407,6 @@ async def _process_single_chunk(
             }
             for s in result.segments
         ],
-        "language_detected": result.language_detected,
-        "chunk_start_time": chunk.start_time,
-        "chunk_end_time": chunk.end_time,
     }
 
 
@@ -437,6 +482,46 @@ def _extract_context_from_results(
             context_lines.append(f"{speaker}: {text}")
 
     return "\n".join(context_lines), list(all_speakers)
+
+
+def _check_coverage_gap(
+    result: dict,
+    chunk: ChunkInfo,
+) -> float | None:
+    """Check if the provider skipped audio at the start or end of a chunk.
+
+    Returns the largest gap in seconds, or None if coverage is acceptable.
+    Also detects timestamp overflow (segments beyond chunk duration).
+    """
+    segments = result.get("segments", [])
+    if not segments:
+        return chunk.duration  # No segments at all — entire chunk is a gap
+
+    first_start = segments[0].get("start_time", 0)
+    last_end = segments[-1].get("end_time", 0)
+    remaining = chunk.duration - last_end
+
+    # Detect timestamp overflow: if last_end > duration, timestamps drifted.
+    # Find the actual coverage by looking at the last segment within bounds.
+    if remaining < 0:
+        last_valid_end = 0.0
+        for seg in segments:
+            seg_start = seg.get("start_time", 0)
+            seg_end = seg.get("end_time", 0)
+            if seg_start <= chunk.duration:
+                last_valid_end = max(last_valid_end, min(seg_end, chunk.duration))
+        remaining = chunk.duration - last_valid_end
+        logger.warning(
+            "Timestamp overflow detected in chunk",
+            chunk_index=chunk.index,
+            chunk_duration=chunk.duration,
+            last_segment_end=last_end,
+            overflow=last_end - chunk.duration,
+        )
+
+    # Return the larger of the two gaps
+    gap = max(first_start, remaining)
+    return gap if gap > 0 else None
 
 
 @celery_app.task(bind=True, max_retries=3)

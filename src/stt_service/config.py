@@ -116,6 +116,12 @@ class ProviderSettings(BaseSettings):
     hispeech_api_url: str = "https://api.hispeech.ai"
     hispeech_rpm_limit: int = 60
 
+    # wav.am (Armenian-optimized)
+    wav_api_key: str = ""
+    wav_api_url: str = "https://wav.am"
+    wav_project_name: str = "STT-Tool"
+    wav_rpm_limit: int = 60
+
 
 class ChunkingSettings(BaseSettings):
     """Audio chunking configuration."""
@@ -123,19 +129,14 @@ class ChunkingSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="CHUNKING_")
 
     # Maximum chunk duration in seconds
-    max_chunk_duration: int = 600  # 10 minutes
+    max_chunk_duration: int = 300  # 5 minutes
 
     # Overlap settings for context-aware stitching
-    overlap_enabled: bool = True  # Enable overlapping chunks for better stitching
-    overlap_duration: float = 5.0  # 5 seconds overlap between chunks (increased from 3.0)
-    overlap_similarity_threshold: float = 0.8  # Similarity threshold for deduplication (increased from 0.7)
+    overlap_duration: float = 10.0  # 10 seconds overlap between chunks
+    overlap_similarity_threshold: float = 0.8  # Similarity threshold for deduplication
 
     # Context injection settings
     context_segments: int = 3  # Number of previous segments to pass as context
-
-    # Silence detection for smart splitting
-    min_silence_duration: float = 0.5  # seconds
-    silence_threshold_db: int = -40  # dB
 
     # Maximum file size for single-chunk processing (bytes)
     max_single_chunk_size: int = 25 * 1024 * 1024  # 25MB

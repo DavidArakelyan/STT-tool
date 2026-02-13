@@ -141,4 +141,14 @@ async def providers_status(
         )
     )
 
+    # wav.am
+    providers.append(
+        ProviderStatus(
+            name="wav",
+            configured=bool(settings.providers.wav_api_key),
+            available=bool(settings.providers.wav_api_key),
+            error=None if settings.providers.wav_api_key else "API key not configured",
+        )
+    )
+
     return ProvidersStatusResponse(providers=providers)

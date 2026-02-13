@@ -120,7 +120,7 @@ class TranscriptMerger:
     def _format_single_chunk(self, result: dict[str, Any]) -> dict[str, Any]:
         """Format a single chunk result to standard output format."""
         segments = result.get("segments", [])
-        full_text = result.get("text", "")
+        full_text = result.get("chunk_full_text", "")
 
         if not full_text and segments:
             full_text = " ".join(s.get("text", "") for s in segments)
@@ -315,12 +315,15 @@ class TranscriptMerger:
         """
         warnings = []
 
+        # Threshold for considering a gap significant (seconds)
+        gap_threshold = 15.0
+
         for i, (result, chunk_info) in enumerate(zip(chunk_results, chunk_infos)):
             segments = result.get("segments", [])
 
             # Check 1: Very short transcript for long audio (likely fallback/truncated)
             if chunk_info.duration > 60:  # More than 1 minute
-                total_text = result.get("text", "")
+                total_text = result.get("chunk_full_text", "")
                 if len(total_text) < 100:  # Less than 100 characters
                     warnings.append(
                         f"Chunk {i}: Suspiciously short transcript ({len(total_text)} chars) "
@@ -342,6 +345,40 @@ class TranscriptMerger:
                 warnings.append(
                     f"Chunk {i}: Used fallback regex parsing (JSON parse failed)"
                 )
+
+            # Check 4: First segment starts too far into the chunk (provider skipped audio)
+            if segments:
+                first_start = segments[0].get("start_time", 0)
+                if first_start > gap_threshold:
+                    warnings.append(
+                        f"Chunk {i}: First segment starts at {first_start:.1f}s "
+                        f"({first_start:.1f}s of audio skipped at start)"
+                    )
+                    logger.error(
+                        "Provider skipped audio at chunk start",
+                        chunk_index=i,
+                        first_segment_start=first_start,
+                        chunk_duration=chunk_info.duration,
+                        skipped_seconds=first_start,
+                    )
+
+            # Check 5: Last segment ends too far before the chunk ends (provider stopped early)
+            if segments:
+                last_end = segments[-1].get("end_time", 0)
+                remaining = chunk_info.duration - last_end
+                if remaining > gap_threshold:
+                    warnings.append(
+                        f"Chunk {i}: Last segment ends at {last_end:.1f}s "
+                        f"but chunk is {chunk_info.duration:.1f}s "
+                        f"({remaining:.1f}s of audio not transcribed at end)"
+                    )
+                    logger.error(
+                        "Provider stopped early before chunk end",
+                        chunk_index=i,
+                        last_segment_end=last_end,
+                        chunk_duration=chunk_info.duration,
+                        untranscribed_seconds=remaining,
+                    )
 
         return warnings
 

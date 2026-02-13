@@ -9,6 +9,7 @@ from stt_service.providers.base import (
 from stt_service.providers.elevenlabs import ElevenLabsProvider
 from stt_service.providers.gemini import GeminiProvider
 from stt_service.providers.hispeech import HiSpeechProvider
+from stt_service.providers.wav import WavProvider
 from stt_service.providers.whisper import WhisperProvider
 
 __all__ = [
@@ -20,6 +21,7 @@ __all__ = [
     "ElevenLabsProvider",
     "WhisperProvider",
     "HiSpeechProvider",
+    "WavProvider",
     "get_provider",
     "ProviderFactory",
 ]
@@ -33,6 +35,7 @@ class ProviderFactory:
         "elevenlabs": ElevenLabsProvider,
         "whisper": WhisperProvider,
         "hispeech": HiSpeechProvider,
+        "wav": WavProvider,
     }
 
     @classmethod

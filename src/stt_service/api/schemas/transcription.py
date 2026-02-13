@@ -16,6 +16,7 @@ class ProviderType(str, Enum):
     ASSEMBLYAI = "assemblyai"
     DEEPGRAM = "deepgram"
     HISPEECH = "hispeech"
+    WAV = "wav"
 
 
 class RecordingType(str, Enum):
