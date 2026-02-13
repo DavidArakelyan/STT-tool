@@ -1294,8 +1294,11 @@ function renderSystemLogs(logs) {
 
         const lineUpper = line.toUpperCase();
 
-        if (currentSystemTab === 'gemini') {
-            return line.includes('Gemini') || line.includes('generativeai');
+        if (currentSystemTab === 'api') {
+            return line.includes('Gemini') || line.includes('generativeai') ||
+                line.includes('wav.am') || line.includes('HiSpeech') ||
+                line.includes('ElevenLabs') || line.includes('elevenlabs') ||
+                line.includes('API request') || line.includes('API response');
         }
 
         if (currentSystemTab === 'sql') {
@@ -1347,8 +1350,8 @@ function renderSystemLogs(logs) {
             formattedLine = `<span class="sys-log-sql">${line}</span>`;
         }
 
-        // Highlight Gemini API
-        if (line.includes('Gemini API request') || line.includes('Gemini API response')) {
+        // Highlight provider API calls
+        if (line.includes('API request') || line.includes('API response')) {
             formattedLine = `<div class="sys-log-api">${line}</div>`;
         }
 

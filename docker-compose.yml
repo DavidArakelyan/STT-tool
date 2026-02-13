@@ -9,18 +9,18 @@ services:
     environment:
       - DEBUG=true
       - ENVIRONMENT=development
-      # API_KEYS loaded from encoded .env file
+      # Credentials read from .env (gitignored)
       - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_USER=stt_user
-      - DB_PASSWORD=stt_password
-      - DB_NAME=stt_db
+      - DB_USER=${DB_USER:-stt_user}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME:-stt_db}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - S3_ENDPOINT_URL=http://minio:9000
-      - S3_ACCESS_KEY_ID=minioadmin
-      - S3_SECRET_ACCESS_KEY=minioadmin
-      - S3_BUCKET_NAME=stt-files
+      - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+      - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-stt-files}
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - PROVIDER_WAV_API_KEY=${PROVIDER_WAV_API_KEY:-}
@@ -51,15 +51,15 @@ services:
       - ENVIRONMENT=development
       - DB_HOST=postgres
       - DB_PORT=5432
-      - DB_USER=stt_user
-      - DB_PASSWORD=stt_password
-      - DB_NAME=stt_db
+      - DB_USER=${DB_USER:-stt_user}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_NAME=${DB_NAME:-stt_db}
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - S3_ENDPOINT_URL=http://minio:9000
-      - S3_ACCESS_KEY_ID=minioadmin
-      - S3_SECRET_ACCESS_KEY=minioadmin
-      - S3_BUCKET_NAME=stt-files
+      - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID}
+      - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY}
+      - S3_BUCKET_NAME=${S3_BUCKET_NAME:-stt-files}
       - CELERY_BROKER_URL=redis://redis:6379/0
       - CELERY_RESULT_BACKEND=redis://redis:6379/1
       - PROVIDER_GEMINI_API_KEY=${PROVIDER_GEMINI_API_KEY:-}
@@ -69,7 +69,6 @@ services:
       - PROVIDER_GEMINI_REQUEST_TIMEOUT=${PROVIDER_GEMINI_REQUEST_TIMEOUT:-300}
       - PROVIDER_GEMINI_TEMPERATURE=${PROVIDER_GEMINI_TEMPERATURE:-1.0}
       - PROVIDER_ELEVENLABS_API_KEY=${PROVIDER_ELEVENLABS_API_KEY:-}
-      - PROVIDER_HISPEECH_API_KEY=${PROVIDER_HISPEECH_API_KEY:-}
       - PROVIDER_HISPEECH_API_KEY=${PROVIDER_HISPEECH_API_KEY:-}
       - PROVIDER_HISPEECH_API_URL=${PROVIDER_HISPEECH_API_URL:-https://api.hispeech.ai}
       - PROVIDER_WAV_API_KEY=${PROVIDER_WAV_API_KEY:-}
@@ -99,15 +98,15 @@ services:
   postgres:
     image: postgres:15-alpine
     environment:
-      - POSTGRES_USER=stt_user
-      - POSTGRES_PASSWORD=stt_password
-      - POSTGRES_DB=stt_db
+      - POSTGRES_USER=${DB_USER:-stt_user}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=${DB_NAME:-stt_db}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U stt_user -d stt_db" ]
+      test: [ "CMD-SHELL", "pg_isready -U ${DB_USER:-stt_user} -d ${DB_NAME:-stt_db}" ]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -132,8 +131,8 @@ services:
       - "9000:9000"
       - "9001:9001"
     environment:
-      - MINIO_ROOT_USER=minioadmin
-      - MINIO_ROOT_PASSWORD=minioadmin
+      - MINIO_ROOT_USER=${S3_ACCESS_KEY_ID}
+      - MINIO_ROOT_PASSWORD=${S3_SECRET_ACCESS_KEY}
     volumes:
       - minio_data:/data
     command: server /data --console-address ":9001"
@@ -144,7 +143,7 @@ services:
     depends_on:
       - minio
     entrypoint: >
-      /bin/sh -c " sleep 5; mc alias set myminio http://minio:9000 minioadmin minioadmin; mc mb myminio/stt-files --ignore-existing; mc anonymous set download myminio/stt-files; exit 0; "
+      /bin/sh -c " sleep 5; mc alias set myminio http://minio:9000 ${S3_ACCESS_KEY_ID} ${S3_SECRET_ACCESS_KEY}; mc mb myminio/${S3_BUCKET_NAME:-stt-files} --ignore-existing; exit 0; "
 
   # Flower for Celery monitoring (optional)
   flower:

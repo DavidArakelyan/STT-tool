@@ -4,7 +4,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from stt_service.utils.url_validation import validate_external_url
 
 
 class ProviderType(str, Enum):
@@ -121,11 +123,24 @@ class TranscriptionRequest(BaseModel):
         description="URL to POST results when transcription completes",
     )
 
+    @field_validator("webhook_url")
+    @classmethod
+    def validate_webhook_url(cls, v: str | None) -> str | None:
+        if v is not None:
+            validate_external_url(v)
+        return v
+
 
 class TranscriptionUrlRequest(TranscriptionRequest):
     """Request for transcription via URL."""
 
     audio_url: str = Field(..., description="URL of the audio file to transcribe")
+
+    @field_validator("audio_url")
+    @classmethod
+    def validate_audio_url(cls, v: str) -> str:
+        validate_external_url(v)
+        return v
 
 
 # Response schemas

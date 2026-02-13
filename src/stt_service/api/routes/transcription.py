@@ -11,6 +11,7 @@ from stt_service.api.schemas.transcription import (
 )
 from stt_service.core.orchestrator import JobOrchestrator
 from stt_service.utils.exceptions import FileTooLargeError, InvalidAudioFormatError
+from stt_service.utils.file_validation import is_valid_media_file
 
 router = APIRouter(prefix="/transcribe", tags=["Transcription"])
 
@@ -55,6 +56,14 @@ async def submit_transcription(
     audio_data = await audio.read()
     if len(audio_data) > settings.max_upload_size:
         raise FileTooLargeError(len(audio_data), settings.max_upload_size)
+
+    # Verify file content matches a known audio/video format
+    if not is_valid_media_file(audio_data):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File content does not match any supported audio/video format. "
+            "The file may be corrupted or not a real media file.",
+        )
 
     # Parse configuration
     try:
@@ -126,6 +135,13 @@ async def submit_transcription_url(
     # Validate size
     if len(audio_data) > settings.max_upload_size:
         raise FileTooLargeError(len(audio_data), settings.max_upload_size)
+
+    # Verify file content matches a known audio/video format
+    if not is_valid_media_file(audio_data):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Downloaded content does not match any supported audio/video format.",
+        )
 
     # Extract filename from URL
     filename = request.audio_url.split("/")[-1].split("?")[0] or "audio.mp3"

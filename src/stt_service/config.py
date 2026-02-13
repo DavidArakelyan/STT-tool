@@ -15,7 +15,7 @@ class DatabaseSettings(BaseSettings):
     host: str = "localhost"
     port: int = 5432
     user: str = "stt_user"
-    password: str = "stt_password"
+    password: str  # Required — must be set via DB_PASSWORD env var
     name: str = "stt_db"
     pool_size: int = 10
     max_overflow: int = 20
@@ -55,8 +55,8 @@ class S3Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="S3_")
 
     endpoint_url: str | None = None  # None for AWS S3, set for MinIO
-    access_key_id: str = ""
-    secret_access_key: str = ""
+    access_key_id: str  # Required — must be set via S3_ACCESS_KEY_ID env var
+    secret_access_key: str  # Required — must be set via S3_SECRET_ACCESS_KEY env var
     bucket_name: str = "stt-files"
     region: str = "us-east-1"
 
@@ -175,7 +175,7 @@ class Settings(BaseSettings):
 
     # CORS
     cors_origins: list[str] = ["*"]
-    cors_allow_credentials: bool = True
+    cors_allow_credentials: bool = False
 
     # Logging
     log_level: str = "INFO"
