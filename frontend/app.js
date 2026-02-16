@@ -412,6 +412,7 @@ function renderJobCard(job) {
         : 0;
 
     const showProgress = ['processing', 'uploaded'].includes(job.status);
+    const showChunks = job.total_chunks > 1;
     const showRetry = job.status === 'failed';
     const showCancel = ['pending', 'uploaded', 'processing'].includes(job.status);
     const showResult = job.status === 'completed';
@@ -495,7 +496,7 @@ function renderJobCard(job) {
 
             <div class="job-actions">
                 <button class="btn btn-secondary" onclick="viewLogs('${job.job_id}')">📋 Logs</button>
-                ${showProgress ? `<button class="btn btn-secondary" onclick="toggleChunks('${job.job_id}')">📊 Show Chunks</button>` : ''}
+                ${showChunks ? `<button class="btn btn-secondary" onclick="toggleChunks('${job.job_id}')">📊 Show Chunks</button>` : ''}
                 ${showResult ? `<button class="btn btn-success" onclick="viewResult('${job.job_id}')">📄 View Result</button>` : ''}
                 ${showResult ? `<button class="btn btn-primary" onclick="downloadBundle('${job.job_id}')">⬇️ Download</button>` : ''}
                 ${showDownloadPartial ? `<button class="btn btn-secondary" onclick="downloadPartial('${job.job_id}')">⬇️ Download Partial</button>` : ''}
@@ -692,6 +693,80 @@ function renderChunks(jobId, chunks) {
 let currentChunkData = null;
 let currentChunkInfo = null;
 
+function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function formatChunkLogView(data) {
+    const meta = data.metadata || {};
+    const hasApiInfo = meta.prompt || meta.input_tokens || meta.raw_response;
+
+    // ---- API Logs Section ----
+    let apiSection = '';
+    if (hasApiInfo) {
+        const promptHtml = meta.prompt
+            ? `<div class="api-log-block">
+                   <div class="api-log-label">Prompt</div>
+                   <pre class="api-log-pre">${escapeHtml(meta.prompt)}</pre>
+               </div>`
+            : '';
+
+        const tokensHtml = (meta.input_tokens != null || meta.output_tokens != null)
+            ? `<div class="api-log-block">
+                   <div class="api-log-label">Token Usage</div>
+                   <div class="api-log-tokens">
+                       <span class="token-badge token-in">IN: ${meta.input_tokens ?? '—'}</span>
+                       <span class="token-badge token-out">OUT: ${meta.output_tokens ?? '—'}</span>
+                       ${meta.processing_latency_ms ? `<span class="token-badge token-latency">${meta.processing_latency_ms}ms</span>` : ''}
+                       ${meta.finish_reason ? `<span class="token-badge token-finish">${escapeHtml(meta.finish_reason)}</span>` : ''}
+                       ${meta.model ? `<span class="token-badge token-model">${escapeHtml(meta.model)}</span>` : ''}
+                   </div>
+               </div>`
+            : '';
+
+        const responseHtml = meta.raw_response
+            ? `<div class="api-log-block">
+                   <div class="api-log-label">API Response</div>
+                   <pre class="api-log-pre api-log-response">${escapeHtml(meta.raw_response)}</pre>
+               </div>`
+            : '';
+
+        apiSection = `
+            <div class="api-log-section">
+                <div class="api-log-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                    <span>API Call Details</span>
+                    <span class="api-log-toggle">▼</span>
+                </div>
+                <div class="api-log-body">
+                    ${promptHtml}
+                    ${tokensHtml}
+                    ${responseHtml}
+                </div>
+            </div>`;
+    }
+
+    // ---- Transcript Section (original data minus metadata internals) ----
+    const displayData = { ...data };
+    if (displayData.metadata) {
+        // Show metadata without the large prompt/response fields (already shown above)
+        const { prompt, raw_response, ...rest } = displayData.metadata;
+        displayData.metadata = rest;
+    }
+    const transcriptSection = `
+        <div class="api-log-section">
+            <div class="api-log-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                <span>Chunk Transcript</span>
+                <span class="api-log-toggle">▼</span>
+            </div>
+            <div class="api-log-body">
+                <pre class="api-log-pre">${escapeHtml(JSON.stringify(displayData, null, 2))}</pre>
+            </div>
+        </div>`;
+
+    return apiSection + transcriptSection;
+}
+
 async function viewChunkLog(jobId, chunkIndex) {
     try {
         const response = await fetch(`${API_BASE}/jobs/${jobId}/chunks/${chunkIndex}/log`, {
@@ -725,7 +800,7 @@ async function viewChunkLog(jobId, chunkIndex) {
         `;
 
         const container = document.getElementById('logsContainer');
-        container.innerHTML = `<pre class="json-log">${JSON.stringify(data, null, 2)}</pre>`;
+        container.innerHTML = formatChunkLogView(data);
 
         // Hide system logs if open
         document.getElementById('systemLogsContainer').style.display = 'none';

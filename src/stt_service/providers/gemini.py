@@ -60,6 +60,12 @@ class GeminiProvider(BaseSTTProvider):
                 model=settings.providers.gemini_model,
             )
 
+            logger.info(
+                "========== GEMINI PROMPT ==========",
+                chunk_index=config.chunk_index,
+                prompt=prompt,
+            )
+
             # Create audio part
             audio_part = {
                 "mime_type": mime_type,
@@ -87,15 +93,6 @@ class GeminiProvider(BaseSTTProvider):
                     "description": "Transcribed text for this segment"
                 }
             }
-
-            # Add maximum constraints if duration is available
-            # This prevents timestamp overflow where Gemini generates timestamps beyond chunk duration
-            if config.audio_duration:
-                logger.debug(
-                    "Processing chunk with duration constraint",
-                    max_timestamp=config.audio_duration,
-                    chunk_index=config.chunk_index,
-                )
 
             generation_config = genai.GenerationConfig(
                 temperature=settings.providers.gemini_temperature,
@@ -128,7 +125,12 @@ class GeminiProvider(BaseSTTProvider):
             # Calculate processing latency
             processing_latency_ms = int((time.time() - start_time) * 1000)
 
-            logger.info("Gemini API response received", has_text=bool(response.text))
+            logger.info(
+                "========== GEMINI RESPONSE ==========",
+                chunk_index=config.chunk_index,
+                latency_ms=processing_latency_ms,
+                response_text=response.text if hasattr(response, 'text') else "",
+            )
 
             # Extract finish reason
             finish_reason_str = "UNKNOWN"
@@ -171,7 +173,7 @@ class GeminiProvider(BaseSTTProvider):
                 output_tokens = getattr(usage, 'candidates_token_count', 0) or 0
 
                 logger.info(
-                    "Gemini token usage",
+                    "========== GEMINI TOKENS ==========",
                     chunk_index=config.chunk_index,
                     input_tokens=input_tokens,
                     output_tokens=output_tokens,
@@ -188,12 +190,15 @@ class GeminiProvider(BaseSTTProvider):
                     )
 
             # Build metadata dict
+            raw_response_text = response.text if hasattr(response, 'text') else ""
             response_metadata = {
                 "model": settings.providers.gemini_model,
+                "prompt": prompt,
                 "input_tokens": input_tokens,
                 "output_tokens": output_tokens,
                 "processing_latency_ms": processing_latency_ms,
                 "finish_reason": finish_reason_str,
+                "raw_response": raw_response_text,
             }
 
             # Parse response
@@ -203,7 +208,7 @@ class GeminiProvider(BaseSTTProvider):
             else:
                  # Fallback: 16-bit 16kHz mono = 32KB/s
                  duration_est = len(audio_data) / 32000
-            
+
             return self._parse_response(response, config, duration=duration_est, extra_metadata=response_metadata)
 
         except Exception as e:
@@ -263,24 +268,151 @@ class GeminiProvider(BaseSTTProvider):
         }
         return mime_types.get(audio_format, mimetypes.guess_type(f"file.{audio_format}")[0] or "audio/wav")
 
+    def _build_transcription_prompt_new(self, config: TranscriptionConfig) -> str:
+        """Build structured Gemini prompt for transcription."""
+        sections = []
+
+        # --- SYSTEM ROLE ---
+        primary_lang = self._get_language_name(config.language) if config.language and config.language.lower() != "auto" else None
+        additional_langs = [self._get_language_name(l) for l in config.additional_languages] if config.additional_languages else []
+
+        if primary_lang and additional_langs:
+            lang_desc = f"{primary_lang}-multilingual"
+        elif primary_lang:
+            lang_desc = primary_lang
+        else:
+            lang_desc = "multilingual"
+
+        sections.append(
+            f"### SYSTEM ROLE\n"
+            f"You are an expert {lang_desc} transcriber. "
+            f"Your ONLY goal is to capture every single word spoken in the PROVIDED AUDIO CLIP. "
+            f"Completeness is more important than timestamp precision — timestamps will be corrected automatically."
+        )
+
+        # --- VOICE REFERENCE LIBRARY (only for chunk > 0 with context) ---
+        if config.previous_transcript_context and config.chunk_index > 0:
+            speakers_str = ""
+            if config.previous_speakers:
+                speakers_str = ", ".join(f'"{s}"' for s in config.previous_speakers)
+                speakers_str = f" Use it ONLY to match {speakers_str} to their respective voices."
+
+            sections.append(
+                f"### VOICE REFERENCE LIBRARY (FOR SPEAKER IDENTIFICATION ONLY)\n"
+                f"The following text is from the PREVIOUS chunk.{speakers_str}\n"
+                f"[DO NOT TRANSCRIBE THIS CONTENT. DO NOT START YOUR TRANSCRIPTION FROM WHERE THIS LEAVES OFF.]\n\n"
+                f"--- START REFERENCE ---\n"
+                f"{config.previous_transcript_context}\n"
+                f"--- END REFERENCE ---"
+            )
+
+            logger.info(
+                "Injecting context into prompt",
+                chunk_index=config.chunk_index,
+                context_length=len(config.previous_transcript_context),
+            )
+
+        # --- CURRENT TASK ---
+        duration = config.audio_duration or 0.0
+        chunk_label = f"CHUNK {config.chunk_index + 1}" if config.chunk_index > 0 else "FULL CLIP"
+
+        task_lines = [f"### CURRENT TASK: {chunk_label}"]
+        task_lines.append(
+            f"1. **Target Audio**: Transcribe the ENTIRE {duration:.1f}s audio clip. "
+            f"Do NOT stop early. Every word from the first second to the last must appear."
+        )
+
+        if config.previous_transcript_context and config.chunk_index > 0:
+            task_lines.append(
+                "2. **Independence**: Treat the audio as a fresh start. "
+                "If the speaker repeats words heard in the reference above, "
+                "you MUST transcribe them again in the new segments."
+            )
+        else:
+            task_lines.append(
+                "2. **Independence**: Transcribe every word in the audio from beginning to end."
+            )
+
+        # Language instructions
+        lang_parts = []
+        if primary_lang:
+            lang_parts.append(f"Primary is {primary_lang}.")
+        else:
+            lang_parts.append("Detect the primary language.")
+        if additional_langs:
+            lang_parts.append(f"Include any {', '.join(additional_langs)} phrases exactly as spoken.")
+        task_lines.append(f"3. **Language**: {' '.join(lang_parts)}")
+
+        # Speaker ID instructions
+        if config.diarization_enabled:
+            speaker_note = "Assign SPEAKER_00, SPEAKER_01, etc."
+            if config.previous_speakers:
+                speaker_ids = ", ".join(config.previous_speakers)
+                speaker_note = (
+                    f"Assign {speaker_ids} based on the voices matched "
+                    f"in the reference library above."
+                )
+            if config.max_speakers:
+                speaker_note += f" There are at most {config.max_speakers} speakers."
+            task_lines.append(f"4. **Speaker ID**: {speaker_note}")
+
+        # Optional context / domain / vocabulary
+        extras = []
+        if config.custom_vocabulary:
+            vocab = ", ".join(config.custom_vocabulary)
+            extras.append(f"5. **Key Terms**: {vocab}")
+        if config.prompt:
+            extras.append(f"{'6' if extras else '5'}. **Context**: {config.prompt}")
+        if config.domain:
+            idx = len(extras) + 5
+            extras.append(f"{idx}. **Domain**: {config.domain}")
+        task_lines.extend(extras)
+
+        sections.append("\n".join(task_lines))
+
+        # --- CONSTRAINTS ---
+        constraint_lines = ["### CONSTRAINTS"]
+        constraint_lines.append(
+            '- **Completeness over timing**: Capture every word. '
+            'Approximate timestamps are fine — they will be aligned in post-processing.'
+        )
+        constraint_lines.append(
+            '- **No Summarization**: Every filler word, stutter, and hesitation must be captured.'
+        )
+        constraint_lines.append("- **Output**: Valid JSON only.")
+        sections.append("\n".join(constraint_lines))
+
+        # --- OUTPUT FORMAT ---
+        sections.append(
+            '### OUTPUT FORMAT\n'
+            '{\n'
+            '  "segments": [\n'
+            '    {\n'
+            '      "speaker": "SPEAKER_XX",\n'
+            '      "start": 0.0,\n'
+            '      "end": 0.0,\n'
+            '      "text": "..."\n'
+            '    }\n'
+            '  ]\n'
+            '}'
+        )
+
+        return "\n\n".join(sections)
+
     def _build_transcription_prompt(self, config: TranscriptionConfig) -> str:
-        """Build Gemini prompt for transcription."""
+        """Legacy prompt builder (pre-structured format). Kept for reference/rollback."""
         prompt_parts = [
             "Transcribe the following audio accurately.",
         ]
 
-        # Add duration constraint to prevent timestamp overflow
-        # Note: audio_duration includes chunk overlap (e.g., 3s overlap between consecutive chunks).
-        # Timestamps must be relative to this audio clip (0.0 to audio_duration).
-        # The merger will handle deduplication of overlapping content.
         if config.audio_duration:
             prompt_parts.append(
-                f"\n**CRITICAL TIMING CONSTRAINT**: This audio clip is exactly {config.audio_duration:.1f} seconds long. "
-                f"All segment timestamps (start and end) MUST be between 0.0 and {config.audio_duration:.1f} seconds. "
-                f"Do NOT generate timestamps beyond {config.audio_duration:.1f}s."
+                f"\nThis audio clip is approximately {config.audio_duration:.1f} seconds long. "
+                f"Provide approximate timestamps for each segment. "
+                f"Completeness is more important than timestamp precision — "
+                f"transcribe ALL spoken content even if timing is approximate."
             )
 
-        # Add context from previous chunks for better continuity
         if config.previous_transcript_context and config.chunk_index > 0:
             prompt_parts.append(
                 f"\n**IMPORTANT - This is a CONTINUATION of a longer recording (chunk {config.chunk_index + 1}).** "
@@ -299,9 +431,9 @@ class GeminiProvider(BaseSTTProvider):
             logger.info("Injecting context into prompt", chunk_index=config.chunk_index, context_length=len(config.previous_transcript_context))
 
         if config.language and config.language.lower() != "auto":
-             prompt_parts.append(f"Primary language: {self._get_language_name(config.language)}.")
+            prompt_parts.append(f"Primary language: {self._get_language_name(config.language)}.")
         else:
-             prompt_parts.append("Detect the primary language and transcribe.")
+            prompt_parts.append("Detect the primary language and transcribe.")
 
         if config.additional_languages:
             langs = ", ".join(self._get_language_name(l) for l in config.additional_languages)
@@ -395,36 +527,20 @@ Output format (JSON):
 
                 segments_data = data.get("segments", [])
                 segments = []
-                overflow_count = 0
                 for seg in segments_data:
-                    start = float(seg.get("start", 0))
-                    end = float(seg.get("end", 0))
-
-                    # Clamp timestamps that overflow beyond the chunk duration
-                    if duration > 0 and end > duration:
-                        overflow_count += 1
-                        end = min(end, duration)
-                        start = min(start, duration)
-
                     segments.append(
                         TranscriptionSegment(
                             text=seg.get("text", "").strip(),
-                            start_time=start,
-                            end_time=end,
+                            start_time=float(seg.get("start", 0)),
+                            end_time=float(seg.get("end", 0)),
                             speaker_id=seg.get("speaker", "SPEAKER_00"),
                             confidence=seg.get("confidence"),
                         )
                     )
 
-                if overflow_count > 0:
-                    logger.warning(
-                        "Clamped overflowing timestamps",
-                        overflow_segments=overflow_count,
-                        total_segments=len(segments),
-                        chunk_duration=duration,
-                        max_timestamp=max(float(s.get("end", 0)) for s in segments_data),
-                        chunk_index=config.chunk_index,
-                    )
+                # Alignment pass: rescale timestamps to fit within chunk duration
+                if duration > 0 and segments:
+                    segments = self._align_timestamps(segments, duration, config.chunk_index)
 
                 # Reconstruct full_text from segments (Gemini no longer provides it to save tokens)
                 full_text = " ".join(s.text for s in segments) if segments else ""
@@ -539,6 +655,61 @@ Output format (JSON):
         """Gemini supports a wide range of languages."""
         # Gemini multimodal supports many languages including Armenian
         return True
+    def _align_timestamps(
+        self,
+        segments: list[TranscriptionSegment],
+        duration: float,
+        chunk_index: int,
+    ) -> list[TranscriptionSegment]:
+        """Align segment timestamps to fit within the chunk duration.
+
+        If all timestamps already fit, this is a no-op.
+        If timestamps overflow, they are proportionally rescaled so that
+        the last segment ends at `duration` while preserving relative ordering.
+        Negative starts are clamped to 0.
+        """
+        if not segments:
+            return segments
+
+        max_end = max(s.end_time for s in segments)
+        min_start = min(s.start_time for s in segments)
+
+        needs_rescale = max_end > duration * 1.05  # 5% tolerance
+        needs_negative_fix = min_start < 0
+
+        if not needs_rescale and not needs_negative_fix:
+            return segments
+
+        logger.info(
+            "========== TIMESTAMP ALIGNMENT ==========",
+            chunk_index=chunk_index,
+            original_range=f"{min_start:.1f}-{max_end:.1f}",
+            target_range=f"0.0-{duration:.1f}",
+            rescale=needs_rescale,
+        )
+
+        scale = (duration / max_end) if needs_rescale and max_end > 0 else 1.0
+
+        aligned = []
+        for seg in segments:
+            start = max(0.0, seg.start_time * scale)
+            end = min(duration, seg.end_time * scale)
+            # Ensure end > start
+            if end <= start:
+                end = min(start + 0.1, duration)
+            aligned.append(
+                TranscriptionSegment(
+                    text=seg.text,
+                    start_time=round(start, 2),
+                    end_time=round(end, 2),
+                    speaker_id=seg.speaker_id,
+                    confidence=seg.confidence,
+                    words=seg.words,
+                )
+            )
+
+        return aligned
+
     def _validate_json_structure(self, data: dict[str, Any]) -> None:
         """Validate that the parsed JSON matches the expected schema.
         

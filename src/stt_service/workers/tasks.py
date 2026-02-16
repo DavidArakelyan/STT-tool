@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import shutil
 import tempfile
 from typing import Any
 
@@ -131,6 +132,16 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                     wav_path = os.path.join(temp_dir, "normalized_audio.wav")
                     audio_path = await chunker.convert_to_wav(audio_path, wav_path)
 
+                # Save intermediate WAV for debugging
+                log_dir = f"logs/jobs/{job_id}"
+                os.makedirs(log_dir, exist_ok=True)
+                wav_debug_path = os.path.join(log_dir, "source_audio.wav")
+                try:
+                    shutil.copy2(audio_path, wav_debug_path)
+                    logger.info("Saved intermediate WAV", path=wav_debug_path, size=os.path.getsize(wav_debug_path))
+                except Exception as e:
+                    logger.warning("Failed to save intermediate WAV", error=str(e))
+
                 metadata = await chunker.get_audio_metadata(audio_path)
 
                 if metadata.duration <= settings.chunking.max_chunk_duration:
@@ -231,15 +242,19 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                             on_retry=on_retry_check,
                         )
 
-                        # Validate coverage and retry if provider skipped audio
+                        # Validate coverage and retry if provider skipped audio.
+                        # Threshold scales with chunk duration (20%, min 5s)
+                        # so short chunks (e.g. 30s) get a tighter check.
+                        gap_threshold = max(5.0, chunk.duration * 0.2)
                         coverage_gap = _check_coverage_gap(result, chunk)
-                        if coverage_gap and coverage_gap > 15.0:
+                        if coverage_gap and coverage_gap > gap_threshold:
                             max_coverage_retries = 2
                             for retry_num in range(max_coverage_retries):
                                 logger.warning(
                                     "Coverage gap detected, retrying chunk",
                                     chunk_index=chunk.index,
                                     gap_seconds=coverage_gap,
+                                    gap_threshold=gap_threshold,
                                     retry=retry_num + 1,
                                     max_retries=max_coverage_retries,
                                 )
@@ -254,18 +269,19 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                                 if retry_gap is None or retry_gap < coverage_gap:
                                     result = retry_result
                                     coverage_gap = retry_gap
-                                    if retry_gap is None or retry_gap <= 15.0:
+                                    if retry_gap is None or retry_gap <= gap_threshold:
                                         logger.info(
                                             "Coverage gap resolved after retry",
                                             chunk_index=chunk.index,
                                             retry=retry_num + 1,
                                         )
                                         break
-                            if coverage_gap and coverage_gap > 15.0:
+                            if coverage_gap and coverage_gap > gap_threshold:
                                 logger.error(
                                     "Coverage gap persists after retries",
                                     chunk_index=chunk.index,
                                     gap_seconds=coverage_gap,
+                                    gap_threshold=gap_threshold,
                                 )
 
                         # --- DB Operation 4: Store chunk result ---
@@ -418,6 +434,7 @@ async def _process_single_chunk(
             }
             for s in result.segments
         ],
+        "metadata": result.metadata or {},
     }
 
 

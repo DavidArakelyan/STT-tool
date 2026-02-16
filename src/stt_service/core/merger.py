@@ -50,6 +50,12 @@ class TranscriptMerger:
     ) -> dict[str, Any]:
         """Merge multiple chunk transcripts into a single transcript.
 
+        Uses timestamp-based overlap trimming: for each overlap region between
+        consecutive chunks, the earlier chunk's transcription is preferred and
+        the later chunk's overlapping segments are discarded.  This is
+        language-agnostic and avoids the unreliable text-similarity matching
+        that fails for morphologically rich languages like Armenian.
+
         Args:
             chunk_results: List of transcription results from each chunk
             chunk_infos: List of chunk metadata with timing info
@@ -69,21 +75,49 @@ class TranscriptMerger:
             # Single chunk, just normalize the format
             return self._format_single_chunk(chunk_results[0])
 
-        # Adjust timestamps and collect all segments
-        all_segments = []
-        for i, (result, chunk_info) in enumerate(zip(chunk_results, chunk_infos)):
-            segments = self._extract_segments(result, chunk_info)
-            all_segments.extend(segments)
-
         # Validate chunk completeness
         validation_warnings = self._validate_chunk_completeness(chunk_results, chunk_infos)
         if validation_warnings:
             logger.warning("Chunk validation warnings detected", warnings=validation_warnings)
 
-        # Sort by start time
+        # Process chunks sequentially with timestamp-based overlap trimming.
+        # For each chunk after the first, discard segments whose end_time
+        # falls within the region already covered by the previous chunk.
+        all_segments: list[MergedSegment] = []
+        last_covered_time = 0.0
+        overlap_trimmed = 0
+
+        for i, (result, chunk_info) in enumerate(zip(chunk_results, chunk_infos)):
+            segments = self._extract_segments(result, chunk_info)
+
+            if i == 0:
+                all_segments.extend(segments)
+            else:
+                for seg in segments:
+                    # Keep segment only if it extends beyond already-covered time
+                    if seg.end_time > last_covered_time:
+                        all_segments.append(seg)
+                    else:
+                        overlap_trimmed += 1
+
+            # Advance the coverage watermark
+            if segments:
+                last_covered_time = max(
+                    last_covered_time,
+                    max(s.end_time for s in segments),
+                )
+
+        logger.info(
+            "Overlap trimming complete",
+            total_segments=len(all_segments),
+            overlap_trimmed=overlap_trimmed,
+        )
+
+        # Sort by start time (should already be mostly ordered)
         all_segments.sort(key=lambda s: s.start_time)
 
-        # Remove overlapping/duplicate segments
+        # Safety-net: remove any remaining timestamp overlaps
+        # (e.g. from segments that straddled the trim boundary)
         deduped_segments = self._deduplicate_overlaps(all_segments)
 
         # Normalize speaker IDs across the merged transcript
@@ -113,6 +147,7 @@ class TranscriptMerger:
             "metadata": {
                 "chunks_merged": len(chunk_results),
                 "total_segments": len(normalized_segments),
+                "overlap_trimmed": overlap_trimmed,
                 "dedup_removed": len(all_segments) - len(deduped_segments),
             },
         }
@@ -315,10 +350,9 @@ class TranscriptMerger:
         """
         warnings = []
 
-        # Threshold for considering a gap significant (seconds)
-        gap_threshold = 15.0
-
         for i, (result, chunk_info) in enumerate(zip(chunk_results, chunk_infos)):
+            # Scale gap threshold with chunk duration (20% of chunk, minimum 5s)
+            gap_threshold = max(5.0, chunk_info.duration * 0.2)
             segments = result.get("segments", [])
 
             # Check 1: Very short transcript for long audio (likely fallback/truncated)
