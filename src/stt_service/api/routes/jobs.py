@@ -25,11 +25,28 @@ from stt_service.api.schemas.transcription import (
     Transcript,
     TranscriptSegment,
     TranscriptionResult,
+    UsageInfo,
 )
 from stt_service.core.orchestrator import JobOrchestrator
 from stt_service.db.models import JobStatus as DBJobStatus
 
 router = APIRouter(prefix="/jobs", tags=["Jobs"])
+
+
+def _extract_usage(result: dict | None) -> UsageInfo | None:
+    """Extract usage info from a job result dict."""
+    if not result:
+        return None
+    usage_data = result.get("usage")
+    if not usage_data:
+        return None
+    return UsageInfo(
+        total_input_tokens=usage_data.get("total_input_tokens", 0),
+        total_output_tokens=usage_data.get("total_output_tokens", 0),
+        total_cost_usd=usage_data.get("total_cost_usd", 0.0),
+        model=usage_data.get("model"),
+        provider=usage_data.get("provider"),
+    )
 
 
 def get_orchestrator(
@@ -73,6 +90,7 @@ async def list_jobs(
                 completed_at=job.completed_at,
                 error_message=job.error_message,
                 error_code=job.error_code,
+                usage=_extract_usage(job.result),
             )
             for job in jobs
         ],
@@ -105,6 +123,7 @@ async def get_job(
         completed_at=job.completed_at,
         error_message=job.error_message,
         error_code=job.error_code,
+        usage=_extract_usage(job.result),
     )
 
 
@@ -296,6 +315,7 @@ async def get_job_result(
         transcript=transcript,
         processing_time_seconds=processing_time,
         chunks_processed=job.completed_chunks,
+        usage=_extract_usage(result),
         warnings=result.get("warnings", []),
     )
 

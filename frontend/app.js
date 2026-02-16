@@ -412,7 +412,7 @@ function renderJobCard(job) {
         : 0;
 
     const showProgress = ['processing', 'uploaded'].includes(job.status);
-    const showChunks = job.total_chunks > 1;
+    const showChunks = job.total_chunks > 0 || ['processing', 'uploaded'].includes(job.status);
     const showRetry = job.status === 'failed';
     const showCancel = ['pending', 'uploaded', 'processing'].includes(job.status);
     const showResult = job.status === 'completed';
@@ -448,6 +448,7 @@ function renderJobCard(job) {
                         <span>📦 ${formatFileSize(job.file_size_bytes || 0)}</span>
                         <span>🔧 ${job.provider || 'Unknown'}</span>
                         <span>📅 ${new Date(job.created_at).toLocaleDateString()}</span>
+                        ${job.usage ? `<span>🪙 ${(job.usage.total_input_tokens + job.usage.total_output_tokens).toLocaleString()} tokens</span><span>💰 $${job.usage.total_cost_usd.toFixed(4)}</span>` : ''}
                     </div>
                 </div>
                 <div class="job-status">
@@ -1062,6 +1063,19 @@ function showResultModal(result) {
     const metaContainer = document.getElementById('resultMeta');
     const textarea = document.getElementById('transcriptText');
 
+    const usage = result.usage;
+    const usageHtml = usage ? `
+        <div class="result-meta-item">
+            <label>Tokens</label>
+            <span>${(usage.total_input_tokens + usage.total_output_tokens).toLocaleString()} <span class="text-muted">(${usage.total_input_tokens.toLocaleString()} in / ${usage.total_output_tokens.toLocaleString()} out)</span></span>
+        </div>
+        <div class="result-meta-item">
+            <label>Cost</label>
+            <span>$${usage.total_cost_usd.toFixed(4)}</span>
+        </div>
+        ${usage.model ? `<div class="result-meta-item"><label>Model</label><span>${usage.model}</span></div>` : ''}
+    ` : '';
+
     metaContainer.innerHTML = `
         <div class="result-meta-item">
             <label>Duration</label>
@@ -1079,6 +1093,7 @@ function showResultModal(result) {
             <label>Chunks</label>
             <span>${result.chunks_processed}</span>
         </div>
+        ${usageHtml}
     `;
 
     textarea.value = result.transcript.text || result.transcript.full_text;

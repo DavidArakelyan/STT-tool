@@ -255,6 +255,19 @@ class JobResponse(BaseModel):
     error_message: str | None = None
     error_code: str | None = None
 
+    # Token usage and cost (populated for completed jobs)
+    usage: "UsageInfo | None" = None
+
+
+class UsageInfo(BaseModel):
+    """Token usage and cost information."""
+
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
+    total_cost_usd: float = 0.0
+    model: str | None = None
+    provider: str | None = None
+
 
 class TranscriptionResult(BaseModel):
     """Complete transcription result."""
@@ -275,6 +288,9 @@ class TranscriptionResult(BaseModel):
     processing_time_seconds: float
     chunks_processed: int
 
+    # Token usage and cost
+    usage: UsageInfo | None = None
+
     # Warnings/notes
     warnings: list[str] = Field(default_factory=list)
 
@@ -286,6 +302,10 @@ class JobListResponse(BaseModel):
     total: int
     limit: int
     offset: int
+
+
+# Resolve forward references for JobResponse -> UsageInfo
+JobResponse.model_rebuild()
 
 
 class TranscriptionSubmitResponse(BaseModel):

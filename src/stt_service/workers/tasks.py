@@ -337,6 +337,17 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                 merger = TranscriptMerger()
                 final_transcript = merger.merge_transcripts(results, chunks)
 
+                # Aggregate token usage across all chunks
+                usage = _aggregate_token_usage(results, provider_name)
+                if usage:
+                    final_transcript["usage"] = usage
+                    logger.info(
+                        "Token usage summary",
+                        total_input_tokens=usage["total_input_tokens"],
+                        total_output_tokens=usage["total_output_tokens"],
+                        total_cost_usd=usage["total_cost_usd"],
+                    )
+
                 # --- DB Operation 5: Store final result ---
                 logger.info("="*50 + "\n>>> STAGE: DB & STORAGE PERSISTENCE <<<\n" + "="*50)
                 result_key = storage_service.generate_result_key(job_id)
@@ -550,6 +561,59 @@ def _check_coverage_gap(
     # Return the larger of the two gaps
     gap = max(first_start, remaining)
     return gap if gap > 0 else None
+
+
+# Gemini pricing per 1M tokens (USD)
+_GEMINI_PRICING: dict[str, dict[str, float]] = {
+    "gemini-2.5-flash": {"input": 0.15, "output": 0.60},
+    "gemini-2.5-pro": {"input": 1.25, "output": 10.00},
+    "gemini-2.0-flash": {"input": 0.10, "output": 0.40},
+    "gemini-3-flash": {"input": 0.15, "output": 0.60},
+    "gemini-3-pro": {"input": 1.25, "output": 10.00},
+}
+_GEMINI_DEFAULT_PRICING = {"input": 0.15, "output": 0.60}
+
+
+def _aggregate_token_usage(
+    results: list[dict],
+    provider_name: str,
+) -> dict | None:
+    """Aggregate token usage across all chunk results and compute cost.
+
+    Returns a usage dict or None if no token data is available.
+    """
+    total_input = 0
+    total_output = 0
+    model_name = None
+
+    for result in results:
+        meta = result.get("metadata", {})
+        input_tokens = meta.get("input_tokens", 0) or 0
+        output_tokens = meta.get("output_tokens", 0) or 0
+        total_input += input_tokens
+        total_output += output_tokens
+        if not model_name and meta.get("model"):
+            model_name = meta["model"]
+
+    if total_input == 0 and total_output == 0:
+        return None
+
+    # Compute cost
+    cost_usd = 0.0
+    if provider_name == "gemini" and model_name:
+        pricing = _GEMINI_PRICING.get(model_name, _GEMINI_DEFAULT_PRICING)
+        cost_usd = (
+            total_input * pricing["input"] / 1_000_000
+            + total_output * pricing["output"] / 1_000_000
+        )
+
+    return {
+        "total_input_tokens": total_input,
+        "total_output_tokens": total_output,
+        "total_cost_usd": round(cost_usd, 6),
+        "model": model_name or provider_name,
+        "provider": provider_name,
+    }
 
 
 @celery_app.task(bind=True, max_retries=3)
