@@ -1489,6 +1489,108 @@ select {
     flex-shrink: 0;
 }
 
+/* ===== Project Dashboard ===== */
+.projects-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1rem;
+    margin-top: 1rem;
+}
+
+.project-card {
+    background: var(--bg-input);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    padding: 1.25rem;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.project-card:hover {
+    border-color: var(--accent-primary);
+    background: rgba(99, 102, 241, 0.08);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px var(--shadow-color);
+}
+
+.project-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 0.5rem;
+}
+
+.project-card-name {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0;
+    line-height: 1.3;
+}
+
+.project-delete-btn {
+    opacity: 0;
+    transition: opacity 0.2s;
+    flex-shrink: 0;
+}
+
+.project-card:hover .project-delete-btn {
+    opacity: 0.6;
+}
+
+.project-card:hover .project-delete-btn:hover {
+    opacity: 1;
+}
+
+.project-card-desc {
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+    margin: 0.5rem 0 0;
+    line-height: 1.4;
+}
+
+.project-card-meta {
+    display: flex;
+    gap: 1rem;
+    margin-top: 0.75rem;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+
+.project-card-cost {
+    color: var(--success);
+    font-weight: 600;
+}
+
+.project-card-jobs {
+    color: var(--accent-primary);
+}
+
+/* ===== Project Nav Bar ===== */
+.project-nav-bar {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg-card);
+    border: 1px solid var(--border-color);
+    border-radius: var(--radius-md);
+    margin-bottom: 1.5rem;
+}
+
+.project-nav-name {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.project-nav-cost {
+    margin-left: auto;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--success);
+}
+
 /* ===== Responsive ===== */
 @media (max-width: 600px) {
     .container {
@@ -1511,5 +1613,9 @@ select {
     .job-header {
         flex-direction: column;
         gap: 0.75rem;
+    }
+
+    .projects-grid {
+        grid-template-columns: 1fr;
     }
 }

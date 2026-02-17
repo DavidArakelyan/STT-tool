@@ -47,6 +47,7 @@ class JobOrchestrator:
         filename: str | None = None,
         file_size: int | None = None,
         webhook_url: str | None = None,
+        project_id: str | None = None,
     ) -> str:
         """Create a new transcription job.
 
@@ -56,6 +57,7 @@ class JobOrchestrator:
             filename: Original filename
             file_size: File size in bytes
             webhook_url: Optional webhook URL
+            project_id: Optional project to associate with
 
         Returns:
             Job ID
@@ -66,6 +68,7 @@ class JobOrchestrator:
             original_filename=filename,
             file_size_bytes=file_size,
             webhook_url=webhook_url,
+            project_id=project_id,
         )
 
         logger.info(

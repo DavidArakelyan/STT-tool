@@ -63,6 +63,7 @@ async def list_jobs(
     job_repo: JobRepo,
     _api_key: APIKey,
     status: JobStatus | None = Query(None, description="Filter by status"),
+    project_id: str | None = Query(None, description="Filter by project"),
     limit: int = Query(50, ge=1, le=100, description="Maximum results"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
 ) -> JobListResponse:
@@ -71,8 +72,8 @@ async def list_jobs(
     if status:
         db_status = DBJobStatus(status.value)
 
-    jobs = await job_repo.list_jobs(status=db_status, limit=limit, offset=offset)
-    total = await job_repo.count_jobs(status=db_status)
+    jobs = await job_repo.list_jobs(status=db_status, project_id=project_id, limit=limit, offset=offset)
+    total = await job_repo.count_jobs(status=db_status, project_id=project_id)
 
     return JobListResponse(
         jobs=[

@@ -77,6 +77,12 @@ class JobNotFoundError(STTServiceError):
     pass
 
 
+class ProjectNotFoundError(STTServiceError):
+    """Project not found."""
+
+    pass
+
+
 class JobCancelledError(STTServiceError):
     """Job was cancelled or deleted."""
 

@@ -35,6 +35,7 @@ async def submit_transcription(
         default="{}",
         description="JSON configuration for transcription (TranscriptionRequest schema)",
     ),
+    project_id: str | None = Form(default=None, description="Project ID to associate this job with"),
     orchestrator: JobOrchestrator = Depends(get_orchestrator),
 ) -> TranscriptionSubmitResponse:
     """Submit a new transcription job with audio file upload.
@@ -83,6 +84,7 @@ async def submit_transcription(
         filename=filename,
         file_size=len(audio_data),
         webhook_url=request.webhook_url,
+        project_id=project_id,
     )
 
     # Upload audio
@@ -154,11 +156,12 @@ async def submit_transcription_url(
 
     # Create job
     job_id = await orchestrator.create_job(
-        config=request.model_dump(exclude={"audio_url"}),
+        config=request.model_dump(exclude={"audio_url", "project_id"}),
         provider=request.provider.value,
         filename=filename,
         file_size=len(audio_data),
         webhook_url=request.webhook_url,
+        project_id=request.project_id,
     )
 
     # Upload audio

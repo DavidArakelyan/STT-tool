@@ -4,11 +4,14 @@ let pollingIntervals = {};
 let systemLogInterval = null;
 let currentTranscript = null;
 
+// ===== Project State =====
+let currentProjectId = null;
+let currentProjectName = null;
+
 // ===== Initialize =====
 document.addEventListener('DOMContentLoaded', () => {
     initDropzone();
-    loadApiKey(); // Load from localStorage if present
-    refreshJobs();
+    loadApiKey();
 
     // Update active job timers every second
     setInterval(updateLiveTimers, 1000);
@@ -16,6 +19,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Load saved settings (prompt)
     loadMemoizedPrompt();
     document.getElementById('transcriptionPrompt').addEventListener('input', saveMemoizedPrompt);
+
+    // Start on the dashboard
+    navigateToDashboard();
 });
 
 // ===== Settings Persistence (Prompt) =====
@@ -234,6 +240,230 @@ async function saveSettings() {
     }
 }
 
+// ===== Project Navigation =====
+function navigateToDashboard() {
+    currentProjectId = null;
+    currentProjectName = null;
+
+    // Stop all polling
+    Object.keys(pollingIntervals).forEach(stopPolling);
+
+    // Show dashboard, hide project view
+    document.getElementById('dashboardView').style.display = 'block';
+    document.getElementById('projectView').style.display = 'none';
+
+    loadProjects();
+}
+
+function navigateToProject(projectId, projectName) {
+    currentProjectId = projectId;
+    currentProjectName = projectName;
+
+    // Hide dashboard, show project view
+    document.getElementById('dashboardView').style.display = 'none';
+    document.getElementById('projectView').style.display = 'block';
+
+    // Set project name in nav bar
+    document.getElementById('projectViewName').textContent = projectName;
+    document.getElementById('projectViewCost').textContent = '';
+
+    // Clear file queue when switching projects
+    clearAllFiles();
+
+    // Load jobs for this project
+    refreshJobs();
+
+    // Also fetch project details to show cost
+    fetchProjectCost(projectId);
+}
+
+async function fetchProjectCost(projectId) {
+    try {
+        const response = await fetch(`${API_BASE}/projects/${projectId}`, {
+            headers: { 'X-API-Key': getApiKey() }
+        });
+        if (response.ok) {
+            const project = await response.json();
+            const costEl = document.getElementById('projectViewCost');
+            if (project.total_cost_usd > 0) {
+                costEl.textContent = `$${project.total_cost_usd.toFixed(4)}`;
+            }
+        }
+    } catch (e) {
+        // Silently fail — cost display is cosmetic
+    }
+}
+
+// ===== Project CRUD =====
+async function loadProjects() {
+    const grid = document.getElementById('projectsGrid');
+    try {
+        const response = await fetch(`${API_BASE}/projects`, {
+            headers: { 'X-API-Key': getApiKey() }
+        });
+
+        if (!response.ok) {
+            if (response.status === 401) {
+                grid.innerHTML = `
+                    <div class="empty-state">
+                        <span>🔑</span>
+                        <p>Please enter a valid Session Key to view projects.</p>
+                    </div>
+                `;
+                return;
+            }
+            throw new Error('Failed to load projects');
+        }
+
+        const data = await response.json();
+        renderProjects(data.projects);
+    } catch (error) {
+        console.error('Failed to load projects:', error);
+        grid.innerHTML = `
+            <div class="empty-state">
+                <span>⚠️</span>
+                <p>Failed to load projects. ${error.message}</p>
+            </div>
+        `;
+    }
+}
+
+function renderProjects(projects) {
+    const grid = document.getElementById('projectsGrid');
+
+    if (projects.length === 0) {
+        grid.innerHTML = `
+            <div class="empty-state">
+                <span>📂</span>
+                <p>No projects yet. Create one to get started.</p>
+            </div>
+        `;
+        return;
+    }
+
+    grid.innerHTML = projects.map(p => {
+        const costStr = p.total_cost_usd > 0 ? `$${p.total_cost_usd.toFixed(4)}` : '$0.00';
+        const desc = p.description
+            ? (p.description.length > 100 ? p.description.slice(0, 100) + '...' : p.description)
+            : '';
+        const date = new Date(p.created_at).toLocaleDateString();
+
+        return `
+            <div class="project-card" onclick="navigateToProject('${p.project_id}', '${p.name.replace(/'/g, "\\'")}')">
+                <div class="project-card-header">
+                    <h3 class="project-card-name">${p.name}</h3>
+                    <button class="btn btn-icon btn-sm project-delete-btn" onclick="event.stopPropagation(); showDeleteProjectConfirm('${p.project_id}', '${p.name.replace(/'/g, "\\'")}')" title="Delete project">🗑️</button>
+                </div>
+                ${desc ? `<p class="project-card-desc">${desc}</p>` : ''}
+                <div class="project-card-meta">
+                    <span class="project-card-jobs">${p.job_count} job${p.job_count !== 1 ? 's' : ''}</span>
+                    <span class="project-card-cost">${costStr}</span>
+                    <span class="project-card-date">${date}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function openCreateProjectModal() {
+    document.getElementById('projectName').value = '';
+    document.getElementById('projectDescription').value = '';
+    document.getElementById('createProjectModal').classList.add('open');
+    document.getElementById('projectName').focus();
+}
+
+function closeCreateProjectModal() {
+    document.getElementById('createProjectModal').classList.remove('open');
+}
+
+async function createProject() {
+    const name = document.getElementById('projectName').value.trim();
+    if (!name) {
+        showToast('Project name is required', 'error');
+        return;
+    }
+
+    const description = document.getElementById('projectDescription').value.trim() || null;
+    const btn = document.getElementById('createProjectBtn');
+    btn.disabled = true;
+    btn.textContent = 'Creating...';
+
+    try {
+        const response = await fetch(`${API_BASE}/projects`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': getApiKey()
+            },
+            body: JSON.stringify({ name, description })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to create project');
+        }
+
+        const project = await response.json();
+        showToast(`Project "${name}" created`, 'success');
+        closeCreateProjectModal();
+
+        // Navigate directly into the new project
+        navigateToProject(project.project_id, project.name);
+    } catch (error) {
+        showToast(error.message, 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Create Project';
+    }
+}
+
+// Enter key to create project
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && document.getElementById('createProjectModal').classList.contains('open')) {
+        const activeEl = document.activeElement;
+        // Only trigger on the name input, not the description textarea
+        if (activeEl && activeEl.id === 'projectName') {
+            createProject();
+        }
+    }
+});
+
+// ===== Delete Project =====
+let pendingDeleteProjectId = null;
+
+function showDeleteProjectConfirm(projectId, projectName) {
+    pendingDeleteProjectId = projectId;
+    document.getElementById('deleteProjectName').textContent = projectName;
+    document.getElementById('deleteProjectModal').classList.add('open');
+}
+
+function closeDeleteProjectModal() {
+    document.getElementById('deleteProjectModal').classList.remove('open');
+    pendingDeleteProjectId = null;
+}
+
+async function confirmDeleteProject() {
+    if (!pendingDeleteProjectId) return;
+
+    try {
+        const response = await fetch(`${API_BASE}/projects/${pendingDeleteProjectId}`, {
+            method: 'DELETE',
+            headers: { 'X-API-Key': getApiKey() }
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to delete project');
+        }
+
+        showToast('Project deleted', 'success');
+        closeDeleteProjectModal();
+        loadProjects();
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
+}
+
 // ===== File Upload (Bulk) =====
 const MAX_CONCURRENT_JOBS = 3;
 let selectedFiles = [];      // Files shown in the queue UI (not yet submitted)
@@ -400,6 +630,11 @@ async function submitSingleFile(file) {
     };
     formData.append('config', JSON.stringify(config));
 
+    // Associate with current project if inside one
+    if (currentProjectId) {
+        formData.append('project_id', currentProjectId);
+    }
+
     try {
         const response = await fetch(`${API_BASE}/transcribe`, {
             method: 'POST',
@@ -448,7 +683,11 @@ function updateQueueStatusBar() {
 // ===== Jobs Management =====
 async function refreshJobs() {
     try {
-        const response = await fetch(`${API_BASE}/jobs?limit=20`, {
+        let url = `${API_BASE}/jobs?limit=50`;
+        if (currentProjectId) {
+            url += `&project_id=${currentProjectId}`;
+        }
+        const response = await fetch(url, {
             headers: { 'X-API-Key': getApiKey() }
         });
 
@@ -617,6 +856,10 @@ function startPolling(jobId) {
                 activeJobSlots.delete(jobId); // Free up the concurrency slot
                 if (progress.status === 'completed') {
                     showToast(`Job ${jobId.slice(0, 8)}... completed!`, 'success');
+                    // Refresh project cost if inside a project
+                    if (currentProjectId) {
+                        fetchProjectCost(currentProjectId);
+                    }
                 }
                 refreshJobs();
                 processUploadQueue(); // Submit next queued file if any

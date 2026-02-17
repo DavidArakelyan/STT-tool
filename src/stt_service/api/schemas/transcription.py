@@ -123,6 +123,12 @@ class TranscriptionRequest(BaseModel):
         description="URL to POST results when transcription completes",
     )
 
+    # Project association
+    project_id: str | None = Field(
+        None,
+        description="Project ID to associate this job with",
+    )
+
     @field_validator("webhook_url")
     @classmethod
     def validate_webhook_url(cls, v: str | None) -> str | None:

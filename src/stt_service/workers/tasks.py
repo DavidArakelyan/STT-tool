@@ -89,6 +89,7 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                 job_original_filename = job.original_filename
                 job_duration_seconds = job.duration_seconds
                 job_webhook_url = job.webhook_url
+                job_project_id = job.project_id
                 job_has_chunks = bool(job.chunks)
 
             # Log job attributes (no DB needed)
@@ -358,6 +359,25 @@ async def _process_transcription_job(task, job_id: str) -> dict[str, Any]:
                     await job_repo.set_result(job_id, final_transcript, result_key)
 
                 logger.info("Transcription job completed", job_id=job_id)
+
+                # Update project cost if job belongs to a project
+                if job_project_id:
+                    try:
+                        from stt_service.db.repositories.project import ProjectRepository
+                        async with get_db_context() as session:
+                            project_repo = ProjectRepository(session)
+                            new_cost = await project_repo.recalculate_cost(job_project_id)
+                            logger.info(
+                                "Updated project cost",
+                                project_id=job_project_id,
+                                total_cost_usd=new_cost,
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to update project cost",
+                            project_id=job_project_id,
+                            error=str(e),
+                        )
 
                 # Send webhook if configured
                 if job_webhook_url:

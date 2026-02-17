@@ -49,6 +49,44 @@ class ChunkStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class Project(Base):
+    """Project model for grouping transcription jobs."""
+
+    __tablename__ = "projects"
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        default=lambda: str(uuid4()),
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    total_cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    # Relationships
+    jobs: Mapped[list["Job"]] = relationship(
+        "Job",
+        back_populates="project",
+        order_by="Job.created_at.desc()",
+    )
+
+    def __repr__(self) -> str:
+        return f"<Project {self.id} name={self.name}>"
+
+
 class Job(Base):
     """Transcription job model."""
 
@@ -77,6 +115,13 @@ class Job(Base):
     # S3 references
     s3_original_key: Mapped[str | None] = mapped_column(String(500))
     s3_result_key: Mapped[str | None] = mapped_column(String(500))
+
+    # Project association
+    project_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("projects.id", ondelete="SET NULL"),
+        nullable=True,
+    )
 
     # Provider info
     provider: Mapped[str | None] = mapped_column(String(50))
@@ -109,6 +154,7 @@ class Job(Base):
     webhook_sent: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Relationships
+    project: Mapped["Project | None"] = relationship("Project", back_populates="jobs")
     chunks: Mapped[list["Chunk"]] = relationship(
         "Chunk",
         back_populates="job",
@@ -120,6 +166,7 @@ class Job(Base):
         Index("idx_jobs_status", "status"),
         Index("idx_jobs_created_at", "created_at"),
         Index("idx_jobs_provider", "provider"),
+        Index("idx_jobs_project_id", "project_id"),
     )
 
     def __repr__(self) -> str:

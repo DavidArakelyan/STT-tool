@@ -24,6 +24,7 @@ class JobRepository:
         original_filename: str | None = None,
         file_size_bytes: int | None = None,
         webhook_url: str | None = None,
+        project_id: str | None = None,
     ) -> Job:
         """Create a new job."""
         job = Job(
@@ -32,6 +33,7 @@ class JobRepository:
             original_filename=original_filename,
             file_size_bytes=file_size_bytes,
             webhook_url=webhook_url,
+            project_id=project_id,
             status=JobStatus.PENDING,
         )
         self.session.add(job)
@@ -67,6 +69,7 @@ class JobRepository:
     async def list_jobs(
         self,
         status: JobStatus | None = None,
+        project_id: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[Job]:
@@ -76,16 +79,26 @@ class JobRepository:
         if status:
             query = query.where(Job.status == status)
 
+        if project_id is not None:
+            query = query.where(Job.project_id == project_id)
+
         query = query.limit(limit).offset(offset)
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
-    async def count_jobs(self, status: JobStatus | None = None) -> int:
+    async def count_jobs(
+        self,
+        status: JobStatus | None = None,
+        project_id: str | None = None,
+    ) -> int:
         """Count jobs with optional filtering."""
         query = select(func.count(Job.id))
 
         if status:
             query = query.where(Job.status == status)
+
+        if project_id is not None:
+            query = query.where(Job.project_id == project_id)
 
         result = await self.session.execute(query)
         return result.scalar() or 0

@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from stt_service.api.routes import health, jobs, transcription, settings as settings_api
+from stt_service.api.routes import health, jobs, projects, transcription, settings as settings_api
 from stt_service.config import get_settings
 from stt_service.db.session import async_session_factory, close_db, init_db
 from stt_service.services.storage import storage_service
@@ -21,6 +21,7 @@ configure_logging()
 from stt_service.utils.exceptions import (
     AuthenticationError,
     JobNotFoundError,
+    ProjectNotFoundError,
     ProviderError,
     STTServiceError,
     ValidationError,
@@ -85,7 +86,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_origins,
         allow_credentials=settings.cors_allow_credentials,
-        allow_methods=["GET", "POST", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["X-API-Key", "Content-Type"],
     )
 
@@ -140,6 +141,19 @@ def create_app() -> FastAPI:
             },
         )
 
+    @app.exception_handler(ProjectNotFoundError)
+    async def project_not_found_handler(
+        request: Request, exc: ProjectNotFoundError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "error": "Not Found",
+                "detail": exc.message,
+                "code": "PROJECT_NOT_FOUND",
+            },
+        )
+
     @app.exception_handler(ProviderError)
     async def provider_error_handler(
         request: Request, exc: ProviderError
@@ -181,6 +195,10 @@ def create_app() -> FastAPI:
     )
     app.include_router(
         settings_api.router,
+        prefix=settings.api_prefix,
+    )
+    app.include_router(
+        projects.router,
         prefix=settings.api_prefix,
     )
 

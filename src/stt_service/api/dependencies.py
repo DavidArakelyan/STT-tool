@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from stt_service.config import Settings, get_settings
 from stt_service.db.repositories.chunk import ChunkRepository
 from stt_service.db.repositories.job import JobRepository
+from stt_service.db.repositories.project import ProjectRepository
 from stt_service.db.session import get_db_session
 from stt_service.services.storage import StorageService, storage_service
 
@@ -64,6 +65,13 @@ async def get_chunk_repository(
     yield ChunkRepository(session)
 
 
+async def get_project_repository(
+    session: AsyncSession = Depends(get_db_session),
+) -> AsyncGenerator[ProjectRepository, None]:
+    """Get project repository with database session."""
+    yield ProjectRepository(session)
+
+
 async def check_rate_limit(
     request: Request,
     api_key: str = Depends(verify_api_key),
@@ -99,6 +107,7 @@ async def check_rate_limit(
 DBSession = Annotated[AsyncSession, Depends(get_db_session)]
 JobRepo = Annotated[JobRepository, Depends(get_job_repository)]
 ChunkRepo = Annotated[ChunkRepository, Depends(get_chunk_repository)]
+ProjectRepo = Annotated[ProjectRepository, Depends(get_project_repository)]
 Storage = Annotated[StorageService, Depends(get_storage)]
 APIKey = Annotated[str, Depends(verify_api_key)]
 AppSettings = Annotated[Settings, Depends(get_settings)]
