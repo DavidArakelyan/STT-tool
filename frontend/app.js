@@ -1347,6 +1347,63 @@ async function downloadBundle(jobId) {
     }
 }
 
+// Download all completed job bundles as a single ZIP
+async function downloadAllBundles() {
+    const btn = document.getElementById('downloadAllBtn');
+    const originalText = btn.innerHTML;
+
+    try {
+        btn.disabled = true;
+        btn.innerHTML = '⏳ Preparing...';
+
+        let url = `${API_BASE}/jobs/download-all`;
+        if (currentProjectId) {
+            url += `?project_id=${currentProjectId}`;
+        }
+
+        const response = await fetch(url, {
+            headers: { 'X-API-Key': getApiKey() }
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to prepare download');
+        }
+
+        let filename = 'all_transcriptions.zip';
+        const contentDisposition = response.headers.get('Content-Disposition');
+        if (contentDisposition) {
+            const filenameStar = contentDisposition.match(/filename\*=UTF-8''([^;]+)/i);
+            if (filenameStar && filenameStar[1]) {
+                filename = decodeURIComponent(filenameStar[1]);
+            }
+        }
+
+        const blob = await response.blob();
+        const blobUrl = URL.createObjectURL(blob);
+
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = blobUrl;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+
+        setTimeout(() => {
+            document.body.removeChild(a);
+            URL.revokeObjectURL(blobUrl);
+        }, 100);
+
+        showToast('Download started', 'success');
+    } catch (error) {
+        console.error('Download all failed:', error);
+        showToast(error.message || 'Download failed', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+    }
+}
+
 // Download result directly
 async function downloadResult(jobId) {
     try {

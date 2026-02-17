@@ -101,6 +101,91 @@ async def list_jobs(
     )
 
 
+@router.get("/download-all")
+async def download_all_bundles(
+    job_repo: JobRepo,
+    storage: Storage,
+    _api_key: APIKey,
+    project_id: str | None = Query(None, description="Filter by project"),
+) -> StreamingResponse:
+    """Download a ZIP bundle containing all completed jobs.
+
+    Each job gets its own folder with the original audio, transcript text,
+    and combined transcript JSON (if available).
+    """
+    import structlog
+    from urllib.parse import quote
+
+    logger = structlog.get_logger()
+
+    jobs = await job_repo.list_jobs(
+        status=DBJobStatus.COMPLETED,
+        project_id=project_id,
+        limit=1000,
+    )
+
+    if not jobs:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No completed jobs to download.",
+        )
+
+    zip_buffer = io.BytesIO()
+
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for job in jobs:
+            base_name = (
+                job.original_filename.rsplit(".", 1)[0]
+                if job.original_filename
+                else job.id[:8]
+            )
+            folder = f"{base_name}_{job.id[:8]}"
+
+            # Audio file from S3
+            if job.s3_original_key:
+                try:
+                    audio_bytes = await storage.download_file(job.s3_original_key)
+                    audio_filename = job.original_filename or f"{job.id[:8]}.audio"
+                    zf.writestr(f"{folder}/{audio_filename}", audio_bytes)
+                except Exception as e:
+                    logger.warning("download_all: skipping audio", job_id=job.id, error=str(e))
+
+            # Transcript text
+            if job.result:
+                transcript_text = job.result.get("text", job.result.get("full_text", ""))
+                if not transcript_text:
+                    segments = job.result.get("segments", [])
+                    transcript_text = "\n".join(s.get("text", "") for s in segments)
+                if transcript_text:
+                    zf.writestr(
+                        f"{folder}/{base_name}_transcript.txt",
+                        "\uFEFF" + transcript_text,
+                    )
+
+            # Combined transcript JSON
+            combined_path = Path(f"logs/jobs/{job.id}/combined_transcript.json")
+            if combined_path.exists():
+                try:
+                    with open(combined_path, "r", encoding="utf-8") as f:
+                        zf.writestr(
+                            f"{folder}/{base_name}_combined_transcript.json",
+                            f.read(),
+                        )
+                except Exception as e:
+                    logger.warning("download_all: skipping combined JSON", job_id=job.id, error=str(e))
+
+    zip_buffer.seek(0)
+
+    filename = "all_transcriptions.zip"
+    encoded = quote(filename)
+
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"},
+    )
+
+
 @router.get("/{job_id}", response_model=JobResponse)
 async def get_job(
     job_id: str,
