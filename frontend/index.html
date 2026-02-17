@@ -65,31 +65,22 @@
             <div class="dropzone" id="dropzone">
                 <div class="dropzone-content">
                     <span class="dropzone-icon">📁</span>
-                    <p>Drag and drop audio or video file here</p>
-                    <p class="dropzone-hint">or click to browse</p>
+                    <p>Drag and drop audio or video files here</p>
+                    <p class="dropzone-hint">or click to browse (multiple files supported)</p>
                     <p class="supported-formats">Audio: mp3, wav, m4a, flac, ogg, aac, wma, opus | Video: mp4, mkv, avi,
                         mov, webm</p>
                 </div>
                 <input type="file" id="fileInput"
                     accept=".mp3,.wav,.m4a,.flac,.ogg,.webm,.aac,.wma,.opus,.mp4,.mkv,.avi,.mov,.wmv,.flv,.mpeg,.mpg,.3gp"
-                    hidden>
+                    multiple hidden>
             </div>
 
-            <div class="selected-file-card" id="selectedFile" style="display: none;">
-                <div class="selected-file-header">
-                    <span class="file-ready-badge">✓ Ready to Transcribe</span>
-                    <button class="btn btn-icon btn-remove" onclick="clearFile()" title="Remove file">✕</button>
+            <div class="file-queue-container" id="fileQueueContainer" style="display: none;">
+                <div class="file-queue-header">
+                    <span class="file-ready-badge" id="fileQueueBadge">✓ 0 files ready</span>
+                    <button class="btn btn-secondary btn-sm" onclick="clearAllFiles()">Clear All</button>
                 </div>
-                <div class="selected-file-content">
-                    <span class="file-icon-large">🎵</span>
-                    <div class="selected-file-info">
-                        <span class="file-name-large" id="fileName"></span>
-                        <div class="file-details">
-                            <span class="file-size-badge" id="fileSize"></span>
-                            <span class="file-type-badge" id="fileType"></span>
-                        </div>
-                    </div>
-                </div>
+                <div class="file-queue-list" id="fileQueueList"></div>
             </div>
 
             <!-- Settings -->
@@ -125,6 +116,12 @@
                 <span class="btn-text">Start Transcription</span>
                 <span class="btn-spinner" style="display: none;"></span>
             </button>
+        </div>
+
+        <!-- Queue Status Bar (shown during bulk processing) -->
+        <div class="queue-status-bar" id="queueStatusBar" style="display: none;">
+            <span class="queue-status-spinner"></span>
+            <span id="queueStatusText">Processing files...</span>
         </div>
 
         <!-- Jobs Section -->

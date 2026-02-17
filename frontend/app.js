@@ -234,7 +234,12 @@ async function saveSettings() {
     }
 }
 
-// ===== File Upload =====
+// ===== File Upload (Bulk) =====
+const MAX_CONCURRENT_JOBS = 3;
+let selectedFiles = [];      // Files shown in the queue UI (not yet submitted)
+let pendingFiles = [];       // Files waiting to be uploaded (after Start clicked)
+let activeJobSlots = new Set(); // Job IDs currently consuming a concurrency slot
+
 function initDropzone() {
     const dropzone = document.getElementById('dropzone');
     const fileInput = document.getElementById('fileInput');
@@ -253,47 +258,99 @@ function initDropzone() {
     dropzone.addEventListener('drop', (e) => {
         e.preventDefault();
         dropzone.classList.remove('dragover');
-        const files = e.dataTransfer.files;
-        if (files.length > 0) {
-            handleFileSelect(files[0]);
+        if (e.dataTransfer.files.length > 0) {
+            handleFileSelect(e.dataTransfer.files);
         }
     });
 
     fileInput.addEventListener('change', () => {
         if (fileInput.files.length > 0) {
-            handleFileSelect(fileInput.files[0]);
+            handleFileSelect(fileInput.files);
+            fileInput.value = ''; // Reset so same files can be re-selected
         }
     });
 }
 
-let selectedFile = null;
-
-function handleFileSelect(file) {
+function handleFileSelect(fileList) {
     const audioExtensions = ['mp3', 'wav', 'm4a', 'flac', 'ogg', 'webm', 'aac', 'wma', 'opus'];
     const videoExtensions = ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'mpeg', 'mpg', '3gp'];
     const validExtensions = [...audioExtensions, ...videoExtensions];
-    const ext = file.name.split('.').pop().toLowerCase();
 
-    if (!validExtensions.includes(ext)) {
-        showToast('Invalid file format. Please upload a supported audio or video file.', 'error');
+    let added = 0;
+    for (const file of fileList) {
+        const ext = file.name.split('.').pop().toLowerCase();
+        if (!validExtensions.includes(ext)) {
+            showToast(`Skipped "${file.name}" — unsupported format`, 'error');
+            continue;
+        }
+        // Prevent duplicates by name + size
+        if (selectedFiles.some(f => f.name === file.name && f.size === file.size)) {
+            continue;
+        }
+        selectedFiles.push(file);
+        added++;
+    }
+
+    if (added > 0) {
+        renderFileQueue();
+        updateSubmitButton();
+    }
+}
+
+function renderFileQueue() {
+    const container = document.getElementById('fileQueueContainer');
+    const list = document.getElementById('fileQueueList');
+    const badge = document.getElementById('fileQueueBadge');
+
+    if (selectedFiles.length === 0) {
+        container.style.display = 'none';
         return;
     }
 
-    selectedFile = file;
-    document.getElementById('dropzone').style.display = 'none';
-    document.getElementById('selectedFile').style.display = 'block';
-    document.getElementById('fileName').textContent = file.name;
-    document.getElementById('fileSize').textContent = formatFileSize(file.size);
-    document.getElementById('fileType').textContent = ext.toUpperCase();
-    document.getElementById('submitBtn').disabled = false;
+    container.style.display = 'block';
+    badge.textContent = `✓ ${selectedFiles.length} file${selectedFiles.length !== 1 ? 's' : ''} ready`;
+
+    list.innerHTML = selectedFiles.map((file, index) => {
+        const ext = file.name.split('.').pop().toLowerCase();
+        const isVideo = ['mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'mpeg', 'mpg', '3gp'].includes(ext);
+        return `
+            <div class="file-queue-item">
+                <span class="file-queue-icon">${isVideo ? '🎬' : '🎵'}</span>
+                <span class="file-queue-name" title="${file.name}">${file.name}</span>
+                <span class="file-queue-size">${formatFileSize(file.size)}</span>
+                <span class="file-queue-type">${ext.toUpperCase()}</span>
+                <button class="btn btn-icon btn-remove" onclick="removeFile(${index})" title="Remove">✕</button>
+            </div>
+        `;
+    }).join('');
 }
 
-function clearFile() {
-    selectedFile = null;
-    document.getElementById('dropzone').style.display = 'block';
-    document.getElementById('selectedFile').style.display = 'none';
+function removeFile(index) {
+    selectedFiles.splice(index, 1);
+    renderFileQueue();
+    updateSubmitButton();
+}
+
+function clearAllFiles() {
+    selectedFiles = [];
     document.getElementById('fileInput').value = '';
-    document.getElementById('submitBtn').disabled = true;
+    renderFileQueue();
+    updateSubmitButton();
+}
+
+function updateSubmitButton() {
+    const submitBtn = document.getElementById('submitBtn');
+    const btnText = submitBtn.querySelector('.btn-text');
+
+    if (selectedFiles.length === 0) {
+        submitBtn.disabled = true;
+        btnText.textContent = 'Start Transcription';
+    } else {
+        submitBtn.disabled = false;
+        btnText.textContent = selectedFiles.length === 1
+            ? 'Start Transcription'
+            : `Start Transcription (${selectedFiles.length} files)`;
+    }
 }
 
 function formatFileSize(bytes) {
@@ -302,24 +359,40 @@ function formatFileSize(bytes) {
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
-// ===== Submit Transcription =====
+// ===== Submit Transcription (Queue-based) =====
 async function submitTranscription() {
-    if (!selectedFile) return;
+    if (selectedFiles.length === 0) return;
 
-    const submitBtn = document.getElementById('submitBtn');
-    const btnText = submitBtn.querySelector('.btn-text');
-    const btnSpinner = submitBtn.querySelector('.btn-spinner');
+    // Move selected files into the pending upload queue
+    pendingFiles.push(...selectedFiles);
+    const count = selectedFiles.length;
+    selectedFiles = [];
+    renderFileQueue();
+    updateSubmitButton();
 
-    submitBtn.disabled = true;
-    btnText.textContent = 'Uploading...';
-    btnSpinner.style.display = 'inline-block';
+    showToast(`${count} file${count !== 1 ? 's' : ''} queued for transcription`, 'info');
+    processUploadQueue();
+}
+
+function processUploadQueue() {
+    while (pendingFiles.length > 0 && activeJobSlots.size < MAX_CONCURRENT_JOBS) {
+        const file = pendingFiles.shift();
+        submitSingleFile(file);
+    }
+    updateQueueStatusBar();
+}
+
+async function submitSingleFile(file) {
+    // Reserve a slot immediately (runs synchronously before first await)
+    const placeholder = `uploading-${Date.now()}-${Math.random()}`;
+    activeJobSlots.add(placeholder);
+    updateQueueStatusBar();
 
     const formData = new FormData();
-    formData.append('audio', selectedFile);
+    formData.append('audio', file);
 
     const language = document.getElementById('language').value;
     const prompt = document.getElementById('transcriptionPrompt').value.trim();
-
     const config = {
         provider: document.getElementById('provider').value,
         language: language,
@@ -330,32 +403,46 @@ async function submitTranscription() {
     try {
         const response = await fetch(`${API_BASE}/transcribe`, {
             method: 'POST',
-            headers: {
-                'X-API-Key': getApiKey()
-            },
+            headers: { 'X-API-Key': getApiKey() },
             body: formData
         });
 
         if (!response.ok) {
             const error = await response.json();
-            throw new Error(error.detail || 'Failed to submit transcription');
+            throw new Error(error.detail || 'Upload failed');
         }
 
         const data = await response.json();
-        showToast(`Job submitted: ${data.job_id.slice(0, 8)}...`, 'success');
-        // Do NOT clear file - let them use it again
-        // clearFile(); 
+        // Replace upload placeholder with actual job ID
+        activeJobSlots.delete(placeholder);
+        activeJobSlots.add(data.job_id);
+        showToast(`Uploaded: ${file.name} → ${data.job_id.slice(0, 8)}...`, 'success');
         refreshJobs();
         startPolling(data.job_id);
     } catch (error) {
-        showToast(error.message, 'error');
-    } finally {
-        // Only re-enable button if there's still a selected file
-        // (clearFile() sets selectedFile to null and shows dropzone)
-        submitBtn.disabled = !selectedFile;
-        btnText.textContent = 'Start Transcription';
-        btnSpinner.style.display = 'none';
+        activeJobSlots.delete(placeholder);
+        showToast(`Failed "${file.name}": ${error.message}`, 'error');
     }
+
+    updateQueueStatusBar();
+    // After upload completes (success or fail), try next in queue
+    processUploadQueue();
+}
+
+function updateQueueStatusBar() {
+    const bar = document.getElementById('queueStatusBar');
+    const text = document.getElementById('queueStatusText');
+
+    if (activeJobSlots.size === 0 && pendingFiles.length === 0) {
+        bar.style.display = 'none';
+        return;
+    }
+
+    bar.style.display = 'flex';
+    const parts = [];
+    if (activeJobSlots.size > 0) parts.push(`${activeJobSlots.size} active`);
+    if (pendingFiles.length > 0) parts.push(`${pendingFiles.length} queued`);
+    text.textContent = `Processing: ${parts.join(' · ')}`;
 }
 
 // ===== Jobs Management =====
@@ -527,10 +614,12 @@ function startPolling(jobId) {
 
             if (['completed', 'failed', 'cancelled'].includes(progress.status)) {
                 stopPolling(jobId);
+                activeJobSlots.delete(jobId); // Free up the concurrency slot
                 if (progress.status === 'completed') {
                     showToast(`Job ${jobId.slice(0, 8)}... completed!`, 'success');
                 }
                 refreshJobs();
+                processUploadQueue(); // Submit next queued file if any
             }
         } catch (error) {
             console.error(`Polling error for ${jobId}:`, error);
