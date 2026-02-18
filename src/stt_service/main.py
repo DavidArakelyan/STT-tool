@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from stt_service.api.routes import health, jobs, projects, transcription, settings as settings_api
+from stt_service.api.routes import auth, health, jobs, projects, transcription, settings as settings_api, users
 from stt_service.config import get_settings
 from stt_service.db.session import async_session_factory, close_db, init_db
 from stt_service.services.storage import storage_service
@@ -87,7 +87,7 @@ def create_app() -> FastAPI:
         allow_origins=settings.cors_origins,
         allow_credentials=settings.cors_allow_credentials,
         allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["X-API-Key", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type"],
     )
 
     # Request-ID middleware — generates a unique ID per request,
@@ -199,6 +199,14 @@ def create_app() -> FastAPI:
     )
     app.include_router(
         projects.router,
+        prefix=settings.api_prefix,
+    )
+    app.include_router(
+        auth.router,
+        prefix=settings.api_prefix,
+    )
+    app.include_router(
+        users.router,
         prefix=settings.api_prefix,
     )
 

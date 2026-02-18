@@ -49,19 +49,32 @@ class ChunkStatus(str, enum.Enum):
     FAILED = "failed"
 
 
-class Project(Base):
-    """Project model for grouping transcription jobs."""
+class UserRole(str, enum.Enum):
+    """User role enumeration."""
 
-    __tablename__ = "projects"
+    ADMIN = "admin"
+    USER = "user"
+
+
+class User(Base):
+    """User model for authentication and authorization."""
+
+    __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(
         UUID(as_uuid=False),
         primary_key=True,
         default=lambda: str(uuid4()),
     )
-    name: Mapped[str] = mapped_column(String(200), nullable=False)
-    description: Mapped[str | None] = mapped_column(Text)
-    total_cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+    username: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    display_name: Mapped[str | None] = mapped_column(String(200))
+    role: Mapped[UserRole] = mapped_column(
+        Enum(UserRole),
+        default=UserRole.USER,
+        nullable=False,
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
@@ -77,6 +90,52 @@ class Project(Base):
     )
 
     # Relationships
+    projects: Mapped[list["Project"]] = relationship(
+        "Project",
+        back_populates="owner",
+        order_by="Project.updated_at.desc()",
+    )
+
+    def __repr__(self) -> str:
+        return f"<User {self.id} username={self.username} role={self.role}>"
+
+
+class Project(Base):
+    """Project model for grouping transcription jobs."""
+
+    __tablename__ = "projects"
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        default=lambda: str(uuid4()),
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    total_cost_usd: Mapped[float] = mapped_column(Float, default=0.0)
+
+    # Owner
+    user_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    # Relationships
+    owner: Mapped["User | None"] = relationship("User", back_populates="projects")
     jobs: Mapped[list["Job"]] = relationship(
         "Job",
         back_populates="project",

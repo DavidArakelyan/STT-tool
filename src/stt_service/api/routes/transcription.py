@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
-from stt_service.api.dependencies import APIKey, AppSettings, ChunkRepo, JobRepo, RateLimit, Storage
+from stt_service.api.dependencies import CurrentUser, AppSettings, ChunkRepo, JobRepo, RateLimit, Storage
 from stt_service.api.schemas.transcription import (
     JobStatus,
     TranscriptionRequest,
@@ -28,7 +28,7 @@ def get_orchestrator(
 @router.post("", response_model=TranscriptionSubmitResponse)
 async def submit_transcription(
     settings: AppSettings,
-    _api_key: APIKey,
+    _user: CurrentUser,
     _rate_limit: RateLimit,
     audio: UploadFile = File(..., description="Audio file to transcribe"),
     config: str = Form(
@@ -109,7 +109,7 @@ async def submit_transcription(
 async def submit_transcription_url(
     request: TranscriptionUrlRequest,
     settings: AppSettings,
-    _api_key: APIKey,
+    _user: CurrentUser,
     _rate_limit: RateLimit,
     orchestrator: JobOrchestrator = Depends(get_orchestrator),
 ) -> TranscriptionSubmitResponse:

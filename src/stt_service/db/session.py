@@ -96,6 +96,50 @@ async def init_db() -> None:
         await conn.execute(text(
             "ALTER TABLE jobs ADD COLUMN IF NOT EXISTS error_code VARCHAR(50)"
         ))
+        await conn.execute(text(
+            "ALTER TABLE projects ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE SET NULL"
+        ))
+
+    # Seed default users if they don't exist
+    from stt_service.db.repositories.user import UserRepository
+    from stt_service.db.models import UserRole
+    import structlog
+    logger = structlog.get_logger()
+
+    async with async_session_factory() as session:
+        repo = UserRepository(session)
+
+        # Create default admin
+        admin = await repo.get_by_username("admin")
+        if not admin:
+            admin = await repo.create(
+                username="admin",
+                password="admin",
+                role=UserRole.ADMIN,
+                display_name="Administrator",
+            )
+            logger.info("Created default admin user", user_id=admin.id)
+
+        # Create default user
+        default_user = await repo.get_by_username("user")
+        if not default_user:
+            default_user = await repo.create(
+                username="user",
+                password="user",
+                role=UserRole.USER,
+                display_name="Default User",
+            )
+            logger.info("Created default user", user_id=default_user.id)
+
+            # Assign orphan projects to default user
+            from sqlalchemy import text as sql_text
+            await session.execute(
+                sql_text("UPDATE projects SET user_id = :uid WHERE user_id IS NULL"),
+                {"uid": default_user.id},
+            )
+            logger.info("Assigned orphan projects to default user")
+
+        await session.commit()
 
 
 async def close_db() -> None:

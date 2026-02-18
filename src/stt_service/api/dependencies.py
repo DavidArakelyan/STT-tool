@@ -1,6 +1,5 @@
 """FastAPI dependencies."""
 
-import hmac
 from collections.abc import AsyncGenerator
 from typing import Annotated
 
@@ -13,8 +12,11 @@ from stt_service.config import Settings, get_settings
 from stt_service.db.repositories.chunk import ChunkRepository
 from stt_service.db.repositories.job import JobRepository
 from stt_service.db.repositories.project import ProjectRepository
+from stt_service.db.repositories.user import UserRepository
+from stt_service.db.models import User, UserRole
 from stt_service.db.session import get_db_session
 from stt_service.services.storage import StorageService, storage_service
+from stt_service.api.routes.auth import decode_token
 
 logger = structlog.get_logger()
 
@@ -24,31 +26,53 @@ def get_storage() -> StorageService:
     return storage_service
 
 
-async def verify_api_key(
-    x_api_key: Annotated[str | None, Header()] = None,
-    settings: Settings = Depends(get_settings),
-) -> str:
-    """Verify API key from header."""
-    api_keys = settings.api_keys_list
-    if not api_keys:
-        # No API keys configured = no auth required (development mode)
-        logger.warning("No API keys configured — authentication is disabled")
-        return "anonymous"
-
-    if not x_api_key:
+async def get_current_user(
+    authorization: Annotated[str | None, Header()] = None,
+    session: AsyncSession = Depends(get_db_session),
+) -> User:
+    """Extract and validate the current user from Bearer token."""
+    if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing API key. Provide X-API-Key header.",
+            detail="Not authenticated. Please log in.",
         )
 
-    # Constant-time comparison to prevent timing attacks
-    if not any(hmac.compare_digest(x_api_key, key) for key in api_keys):
+    token = authorization.removeprefix("Bearer ").strip()
+    user_id = decode_token(token)
+    if not user_id:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid API key.",
+            detail="Invalid or expired token.",
         )
 
-    return x_api_key
+    repo = UserRepository(session)
+    try:
+        user = await repo.get_by_id(user_id)
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found.",
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User account is deactivated.",
+        )
+
+    return user
+
+
+async def require_admin(
+    user: User = Depends(get_current_user),
+) -> User:
+    """Require admin role."""
+    if user.role != UserRole.ADMIN:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required.",
+        )
+    return user
 
 
 async def get_job_repository(
@@ -72,17 +96,24 @@ async def get_project_repository(
     yield ProjectRepository(session)
 
 
+async def get_user_repository(
+    session: AsyncSession = Depends(get_db_session),
+) -> AsyncGenerator[UserRepository, None]:
+    """Get user repository with database session."""
+    yield UserRepository(session)
+
+
 async def check_rate_limit(
     request: Request,
-    api_key: str = Depends(verify_api_key),
+    user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> None:
-    """Enforce per-key rate limit on transcription submissions."""
+    """Enforce per-user rate limit on transcription submissions."""
     rpm = settings.rate_limit_rpm
     if rpm <= 0:
         return  # disabled
 
-    key = f"ratelimit:{api_key}"
+    key = f"ratelimit:{user.id}"
     try:
         r = aioredis.from_url(settings.redis.url)
         try:
@@ -108,7 +139,9 @@ DBSession = Annotated[AsyncSession, Depends(get_db_session)]
 JobRepo = Annotated[JobRepository, Depends(get_job_repository)]
 ChunkRepo = Annotated[ChunkRepository, Depends(get_chunk_repository)]
 ProjectRepo = Annotated[ProjectRepository, Depends(get_project_repository)]
+UserRepo = Annotated[UserRepository, Depends(get_user_repository)]
 Storage = Annotated[StorageService, Depends(get_storage)]
-APIKey = Annotated[str, Depends(verify_api_key)]
+CurrentUser = Annotated[User, Depends(get_current_user)]
+AdminUser = Annotated[User, Depends(require_admin)]
 AppSettings = Annotated[Settings, Depends(get_settings)]
 RateLimit = Annotated[None, Depends(check_rate_limit)]

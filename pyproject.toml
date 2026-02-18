@@ -48,6 +48,9 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "tenacity>=8.2.0",
     "structlog>=24.1.0",
+
+    # Auth
+    "bcrypt>=4.0.0",
 ]
 
 [project.optional-dependencies]

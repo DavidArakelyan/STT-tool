@@ -19,11 +19,13 @@ class ProjectRepository:
         self,
         name: str,
         description: str | None = None,
+        user_id: str | None = None,
     ) -> Project:
         """Create a new project."""
         project = Project(
             name=name,
             description=description,
+            user_id=user_id,
         )
         self.session.add(project)
         await self.session.flush()
@@ -45,20 +47,21 @@ class ProjectRepository:
         self,
         limit: int = 50,
         offset: int = 0,
+        user_id: str | None = None,
     ) -> list[Project]:
         """List projects ordered by most recently updated."""
-        query = (
-            select(Project)
-            .order_by(Project.updated_at.desc())
-            .limit(limit)
-            .offset(offset)
-        )
+        query = select(Project).order_by(Project.updated_at.desc())
+        if user_id:
+            query = query.where(Project.user_id == user_id)
+        query = query.limit(limit).offset(offset)
         result = await self.session.execute(query)
         return list(result.scalars().all())
 
-    async def count_projects(self) -> int:
+    async def count_projects(self, user_id: str | None = None) -> int:
         """Count total projects."""
         query = select(func.count(Project.id))
+        if user_id:
+            query = query.where(Project.user_id == user_id)
         result = await self.session.execute(query)
         return result.scalar() or 0
 

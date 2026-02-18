@@ -1663,3 +1663,257 @@ select {
         grid-template-columns: 1fr;
     }
 }
+
+/* ===== Login Page ===== */
+.login-page {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background: linear-gradient(135deg, #0f0c29, #302b63, #24243e);
+}
+
+.login-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 2.5rem;
+    width: 100%;
+    max-width: 400px;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4);
+}
+
+.login-header {
+    text-align: center;
+    margin-bottom: 2rem;
+}
+
+.login-header h1 {
+    font-size: 1.75rem;
+    color: var(--text-primary);
+    margin-bottom: 0.3rem;
+}
+
+.login-header p {
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+}
+
+.login-card .form-group {
+    margin-bottom: 1.25rem;
+}
+
+.login-card label {
+    display: block;
+    margin-bottom: 0.4rem;
+    font-weight: 500;
+    color: var(--text-secondary);
+    font-size: 0.85rem;
+}
+
+.login-card .form-input {
+    width: 100%;
+    padding: 0.7rem 0.9rem;
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 0.95rem;
+    box-sizing: border-box;
+}
+
+.login-card .form-input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.2);
+}
+
+.login-btn {
+    width: 100%;
+    padding: 0.75rem;
+    margin-top: 0.5rem;
+    font-size: 1rem;
+    font-weight: 600;
+}
+
+.login-error {
+    background: rgba(239, 68, 68, 0.15);
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    color: var(--danger);
+    padding: 0.6rem 0.8rem;
+    border-radius: 8px;
+    margin-bottom: 0.75rem;
+    font-size: 0.85rem;
+}
+
+/* ===== User Info Header ===== */
+.user-info {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+}
+
+.user-display-name {
+    color: var(--text-primary);
+    font-weight: 500;
+    font-size: 0.85rem;
+}
+
+.user-role-badge {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 10px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+.role-admin {
+    background: rgba(245, 158, 11, 0.2);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.role-user {
+    background: rgba(99, 102, 241, 0.15);
+    color: var(--primary);
+    border: 1px solid rgba(99, 102, 241, 0.3);
+}
+
+.btn-sm {
+    padding: 0.3rem 0.7rem;
+    font-size: 0.8rem;
+}
+
+.btn-xs {
+    padding: 0.2rem 0.5rem;
+    font-size: 0.75rem;
+}
+
+/* ===== Admin Panel Tabs ===== */
+.settings-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    padding: 0 1.5rem;
+}
+
+.settings-tab {
+    padding: 0.75rem 1.5rem;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.settings-tab:hover {
+    color: var(--text-primary);
+}
+
+.settings-tab.active {
+    color: var(--primary);
+    border-bottom-color: var(--primary);
+}
+
+.admin-tab-content {
+    min-height: 200px;
+}
+
+/* ===== User Management ===== */
+.user-mgmt-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+}
+
+.user-mgmt-header h3 {
+    margin: 0;
+    color: var(--text-primary);
+}
+
+.user-table {
+    width: 100%;
+    border-collapse: collapse;
+}
+
+.user-table th,
+.user-table td {
+    padding: 0.6rem 0.8rem;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.85rem;
+}
+
+.user-table th {
+    color: var(--text-secondary);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.03em;
+}
+
+.user-table td {
+    color: var(--text-primary);
+}
+
+.user-table tr:hover {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+.user-form-card {
+    background: var(--bg-primary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+}
+
+.user-form-card h4 {
+    margin: 0 0 0.75rem 0;
+    color: var(--text-primary);
+}
+
+.user-form-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+}
+
+.user-form-grid .form-group {
+    margin: 0;
+}
+
+.user-form-grid label {
+    display: block;
+    margin-bottom: 0.3rem;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.user-form-grid .form-input {
+    width: 100%;
+    padding: 0.5rem 0.7rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text-primary);
+    font-size: 0.85rem;
+    box-sizing: border-box;
+}
+
+.user-form-grid .form-input:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.user-form-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+}

@@ -8,10 +8,13 @@ let currentTranscript = null;
 let currentProjectId = null;
 let currentProjectName = null;
 
+// ===== Auth State =====
+let currentUser = null;  // { user_id, username, display_name, role }
+let authToken = null;
+
 // ===== Initialize =====
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     initDropzone();
-    loadApiKey();
 
     // Update active job timers every second
     setInterval(updateLiveTimers, 1000);
@@ -20,8 +23,8 @@ document.addEventListener('DOMContentLoaded', () => {
     loadMemoizedPrompt();
     document.getElementById('transcriptionPrompt').addEventListener('input', saveMemoizedPrompt);
 
-    // Start on the dashboard
-    navigateToDashboard();
+    // Check for existing auth token
+    await checkExistingAuth();
 });
 
 // ===== Settings Persistence (Prompt) =====
@@ -36,22 +39,111 @@ function saveMemoizedPrompt(e) {
     localStorage.setItem('stt_prompt', e.target.value);
 }
 
-// ===== API Key Management =====
-function loadApiKey() {
-    const saved = localStorage.getItem('stt_api_key');
-    if (saved) {
-        document.getElementById('apiKey').value = saved;
-    }
-    // No default value set here to prevent leaks
+// ===== Auth Functions =====
+function getAuthHeader() {
+    return authToken ? `Bearer ${authToken}` : '';
 }
 
-function getApiKey() {
-    const key = document.getElementById('apiKey').value;
-    // Only save if it's not empty, to avoid wiping good keys
-    if (key.trim()) {
-        localStorage.setItem('stt_api_key', key);
+async function checkExistingAuth() {
+    const savedToken = localStorage.getItem('stt_auth_token');
+    const savedUser = localStorage.getItem('stt_auth_user');
+    if (!savedToken || !savedUser) {
+        showLoginPage();
+        return;
     }
-    return key;
+    authToken = savedToken;
+    try {
+        const res = await fetch(`${API_BASE}/auth/me`, {
+            headers: { 'Authorization': `Bearer ${savedToken}` }
+        });
+        if (res.ok) {
+            currentUser = await res.json();
+            authToken = savedToken;
+            showApp();
+        } else {
+            localStorage.removeItem('stt_auth_token');
+            localStorage.removeItem('stt_auth_user');
+            showLoginPage();
+        }
+    } catch {
+        showLoginPage();
+    }
+}
+
+async function handleLogin(event) {
+    event.preventDefault();
+    const username = document.getElementById('loginUsername').value.trim();
+    const password = document.getElementById('loginPassword').value;
+    const errorEl = document.getElementById('loginError');
+    const btn = document.getElementById('loginBtn');
+
+    errorEl.style.display = 'none';
+    btn.disabled = true;
+    btn.textContent = 'Signing in...';
+
+    try {
+        const res = await fetch(`${API_BASE}/auth/login`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username, password }),
+        });
+
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({ detail: 'Login failed' }));
+            throw new Error(data.detail || 'Invalid credentials');
+        }
+
+        const data = await res.json();
+        authToken = data.token;
+        currentUser = data.user;
+        localStorage.setItem('stt_auth_token', data.token);
+        localStorage.setItem('stt_auth_user', JSON.stringify(data.user));
+        showApp();
+    } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.style.display = 'block';
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Sign In';
+    }
+}
+
+function handleLogout() {
+    authToken = null;
+    currentUser = null;
+    localStorage.removeItem('stt_auth_token');
+    localStorage.removeItem('stt_auth_user');
+    showLoginPage();
+}
+
+function showLoginPage() {
+    document.getElementById('loginPage').style.display = 'flex';
+    document.getElementById('appContainer').style.display = 'none';
+    // Clear form
+    const usernameEl = document.getElementById('loginUsername');
+    const passwordEl = document.getElementById('loginPassword');
+    if (usernameEl) usernameEl.value = '';
+    if (passwordEl) passwordEl.value = '';
+    const errorEl = document.getElementById('loginError');
+    if (errorEl) errorEl.style.display = 'none';
+}
+
+function showApp() {
+    document.getElementById('loginPage').style.display = 'none';
+    document.getElementById('appContainer').style.display = 'block';
+
+    // Update user info in header
+    document.getElementById('userDisplayName').textContent = currentUser.display_name || currentUser.username;
+    const badge = document.getElementById('userRoleBadge');
+    badge.textContent = currentUser.role;
+    badge.className = 'user-role-badge ' + (currentUser.role === 'admin' ? 'role-admin' : 'role-user');
+
+    // Show/hide gear icon based on role
+    const settingsBtn = document.getElementById('settingsBtn');
+    settingsBtn.style.display = currentUser.role === 'admin' ? '' : 'none';
+
+    // Load dashboard
+    navigateToDashboard();
 }
 
 // ===== Settings Editor Logic =====
@@ -67,11 +159,11 @@ async function openSettings() {
 
     try {
         const response = await fetch(`${API_BASE}/settings`, {
-            headers: { 'X-API-Key': getApiKey() }
+            headers: { 'Authorization': getAuthHeader() }
         });
 
         if (response.status === 401) {
-            throw new Error('Unauthorized. Please enter a valid Session Key.');
+            throw new Error('Unauthorized. Please log in again.');
         }
 
         if (!response.ok) throw new Error('Failed to load settings');
@@ -87,7 +179,7 @@ async function openSettings() {
             <div class="error-placeholder">
                 <p>⚠️ Could not load settings.</p>
                 <p>${error.message}</p>
-                ${error.message.includes('Unauthorized') ? '<p>Please check the Session Key in the top right.</p>' : ''}
+                ${error.message.includes('Unauthorized') ? '<p>Please log in again.</p>' : ''}
             </div>
         `;
     }
@@ -218,7 +310,7 @@ async function saveSettings() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-API-Key': getApiKey()
+                'Authorization': getAuthHeader()
             },
             body: JSON.stringify(currentSettings)
         });
@@ -233,7 +325,7 @@ async function saveSettings() {
         setTimeout(() => closeSettingsModal(), 1000);
 
         // If API Key changed, might need to update session?
-        // For now, let user manage that manually via the Session Key input.
+        // Auth is handled via the global auth token.
     } catch (error) {
         statusDiv.textContent = `Error: ${error.message}`;
         statusDiv.className = 'settings-status error';
@@ -280,7 +372,7 @@ function navigateToProject(projectId, projectName) {
 async function fetchProjectCost(projectId) {
     try {
         const response = await fetch(`${API_BASE}/projects/${projectId}`, {
-            headers: { 'X-API-Key': getApiKey() }
+            headers: { 'Authorization': getAuthHeader() }
         });
         if (response.ok) {
             const project = await response.json();
@@ -343,7 +435,7 @@ async function saveProjectName() {
             method: 'PATCH',
             headers: {
                 'Content-Type': 'application/json',
-                'X-API-Key': getApiKey()
+                'Authorization': getAuthHeader()
             },
             body: JSON.stringify({ name: newName })
         });
@@ -367,7 +459,7 @@ async function loadProjects() {
     const grid = document.getElementById('projectsGrid');
     try {
         const response = await fetch(`${API_BASE}/projects`, {
-            headers: { 'X-API-Key': getApiKey() }
+            headers: { 'Authorization': getAuthHeader() }
         });
 
         if (!response.ok) {
@@ -375,7 +467,7 @@ async function loadProjects() {
                 grid.innerHTML = `
                     <div class="empty-state">
                         <span>🔑</span>
-                        <p>Please enter a valid Session Key to view projects.</p>
+                        <p>Please log in to view projects.</p>
                     </div>
                 `;
                 return;
@@ -464,7 +556,7 @@ async function createProject() {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
-                'X-API-Key': getApiKey()
+                'Authorization': getAuthHeader()
             },
             body: JSON.stringify({ name, description })
         });
@@ -519,7 +611,7 @@ async function confirmDeleteProject() {
     try {
         const response = await fetch(`${API_BASE}/projects/${pendingDeleteProjectId}`, {
             method: 'DELETE',
-            headers: { 'X-API-Key': getApiKey() }
+            headers: { 'Authorization': getAuthHeader() }
         });
 
         if (!response.ok) {
@@ -565,7 +657,7 @@ async function confirmRenameProject() {
             method: 'PATCH',
             headers: {
                 'Content-Type': 'application/json',
-                'X-API-Key': getApiKey()
+                'Authorization': getAuthHeader()
             },
             body: JSON.stringify({ name: newName })
         });
@@ -759,7 +851,7 @@ async function submitSingleFile(file) {
     try {
         const response = await fetch(`${API_BASE}/transcribe`, {
             method: 'POST',
-            headers: { 'X-API-Key': getApiKey() },
+            headers: { 'Authorization': getAuthHeader() },
             body: formData
         });
 
@@ -829,7 +921,7 @@ async function refreshJobs() {
             url += `&project_id=${currentProjectId}`;
         }
         const response = await fetch(url, {
-            headers: { 'X-API-Key': getApiKey() }
+            headers: { 'Authorization': getAuthHeader() }
         });
 
         if (!response.ok) throw new Error('Failed to fetch jobs');
@@ -987,7 +1079,7 @@ function startPolling(jobId) {
     pollingIntervals[jobId] = setInterval(async () => {
         try {
             const response = await fetch(`${API_BASE}/jobs/${jobId}/progress?include_chunks=true`, {
-                headers: { 'X-API-Key': getApiKey() }
+                headers: { 'Authorization': getAuthHeader() }
             });
 
             if (!response.ok) throw new Error('Failed to fetch progress');
@@ -1123,7 +1215,7 @@ async function toggleChunks(jobId) {
 
     try {
         const response = await fetch(`${API_BASE}/jobs/${jobId}/progress?include_chunks=true`, {
-            headers: { 'X-API-Key': getApiKey() }
+            headers: { 'Authorization': getAuthHeader() }
         });
 
         if (!response.ok) throw new Error('Failed to fetch chunks');
@@ -1247,7 +1339,7 @@ function formatChunkLogView(data) {
 async function viewChunkLog(jobId, chunkIndex) {
     try {
         const response = await fetch(`${API_BASE}/jobs/${jobId}/chunks/${chunkIndex}/log`, {
-            headers: { 'X-API-Key': getApiKey() }
+            headers: { 'Authorization': getAuthHeader() }
         });
 
         if (!response.ok) {
@@ -1327,7 +1419,7 @@ async function retryJob(jobId) {
     try {
         const response = await fetch(`${API_BASE}/jobs/${jobId}/retry`, {
             method: 'POST',
-            headers: { 'X-API-Key': getApiKey() }
+            headers: { 'Authorization': getAuthHeader() }
         });
 
         if (!response.ok) {
@@ -1347,7 +1439,7 @@ async function cancelJob(jobId) {
     try {
         const response = await fetch(`${API_BASE}/jobs/${jobId}/cancel`, {
             method: 'POST',
-            headers: { 'X-API-Key': getApiKey() }
+            headers: { 'Authorization': getAuthHeader() }
         });
 
         if (!response.ok) {
@@ -1367,7 +1459,7 @@ async function deleteJob(jobId) {
     try {
         const response = await fetch(`${API_BASE}/jobs/${jobId}`, {
             method: 'DELETE',
-            headers: { 'X-API-Key': getApiKey() }
+            headers: { 'Authorization': getAuthHeader() }
         });
 
         if (!response.ok) {
@@ -1426,7 +1518,7 @@ async function confirmDeleteAll() {
         }
         const response = await fetch(url, {
             method: 'DELETE',
-            headers: { 'X-API-Key': getApiKey() }
+            headers: { 'Authorization': getAuthHeader() }
         });
 
         if (!response.ok) {
@@ -1448,7 +1540,7 @@ async function downloadBundle(jobId) {
         showToast('Preparing download...', 'info');
 
         const response = await fetch(`${API_BASE}/jobs/${jobId}/download-bundle`, {
-            headers: { 'X-API-Key': getApiKey() }
+            headers: { 'Authorization': getAuthHeader() }
         });
 
         if (!response.ok) {
@@ -1510,7 +1602,7 @@ async function downloadAllBundles() {
         }
 
         const response = await fetch(url, {
-            headers: { 'X-API-Key': getApiKey() }
+            headers: { 'Authorization': getAuthHeader() }
         });
 
         if (!response.ok) {
@@ -1556,7 +1648,7 @@ async function downloadAllBundles() {
 async function downloadResult(jobId) {
     try {
         const response = await fetch(`${API_BASE}/jobs/${jobId}/result`, {
-            headers: { 'X-API-Key': getApiKey() }
+            headers: { 'Authorization': getAuthHeader() }
         });
 
         if (!response.ok) {
@@ -1579,7 +1671,7 @@ async function downloadResult(jobId) {
 async function viewResult(jobId) {
     try {
         const response = await fetch(`${API_BASE}/jobs/${jobId}/result`, {
-            headers: { 'X-API-Key': getApiKey() }
+            headers: { 'Authorization': getAuthHeader() }
         });
 
         if (!response.ok) {
@@ -1688,7 +1780,7 @@ function downloadTranscript() {
 async function downloadPartial(jobId) {
     try {
         const response = await fetch(`${API_BASE}/jobs/${jobId}/progress?include_chunks=true`, {
-            headers: { 'X-API-Key': getApiKey() }
+            headers: { 'Authorization': getAuthHeader() }
         });
 
         if (!response.ok) throw new Error('Failed to fetch progress');
@@ -1749,7 +1841,7 @@ async function viewLogs(jobId) {
 
     try {
         const response = await fetch(`${API_BASE}/jobs/${jobId}/logs`, {
-            headers: { 'X-API-Key': getApiKey() }
+            headers: { 'Authorization': getAuthHeader() }
         });
 
         if (!response.ok) {
@@ -1894,7 +1986,7 @@ async function fetchSystemLogs() {
 
     try {
         const response = await fetch(`${API_BASE}/jobs/${currentLogsJobId}/system-logs`, {
-            headers: { 'X-API-Key': getApiKey() }
+            headers: { 'Authorization': getAuthHeader() }
         });
 
         if (!response.ok) throw new Error('Failed to fetch system logs');
@@ -2044,3 +2136,157 @@ function togglePasswordVisibility(inputId) {
     // Optional: Update icon style if needed
 }
 
+// ===== Admin Panel Tab Switching =====
+function switchAdminTab(tab) {
+    document.getElementById('tabConfig').classList.toggle('active', tab === 'config');
+    document.getElementById('tabUsers').classList.toggle('active', tab === 'users');
+    document.getElementById('adminTabConfig').style.display = tab === 'config' ? '' : 'none';
+    document.getElementById('adminTabUsers').style.display = tab === 'users' ? '' : 'none';
+
+    if (tab === 'users') {
+        loadUsers();
+    }
+}
+
+// ===== User Management =====
+async function loadUsers() {
+    const tbody = document.getElementById('usersTableBody');
+    tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">Loading...</td></tr>';
+
+    try {
+        const res = await fetch(`${API_BASE}/users`, {
+            headers: { 'Authorization': getAuthHeader() }
+        });
+        if (!res.ok) throw new Error('Failed to load users');
+
+        const data = await res.json();
+        if (data.users.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;">No users found.</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = data.users.map(u => `
+            <tr>
+                <td><strong>${escapeHtml(u.username)}</strong></td>
+                <td>${escapeHtml(u.display_name || '-')}</td>
+                <td><span class="user-role-badge ${u.role === 'admin' ? 'role-admin' : 'role-user'}">${u.role}</span></td>
+                <td>${u.is_active ? '✅' : '❌'}</td>
+                <td>
+                    <button class="btn btn-secondary btn-xs" onclick="editUser('${u.user_id}', '${escapeHtml(u.username)}', '${escapeHtml(u.display_name || '')}', '${u.role}')">✏️</button>
+                    ${u.user_id !== currentUser.user_id ? `<button class="btn btn-danger btn-xs" onclick="deleteUser('${u.user_id}', '${escapeHtml(u.username)}')">🗑️</button>` : ''}
+                </td>
+            </tr>
+        `).join('');
+    } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--danger);">Error: ${err.message}</td></tr>`;
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function showCreateUserForm() {
+    document.getElementById('userFormCard').style.display = 'block';
+    document.getElementById('userFormTitle').textContent = 'Create User';
+    document.getElementById('editUserId').value = '';
+    document.getElementById('userFormUsername').value = '';
+    document.getElementById('userFormPassword').value = '';
+    document.getElementById('userFormPassword').placeholder = 'password';
+    document.getElementById('userFormDisplayName').value = '';
+    document.getElementById('userFormRole').value = 'user';
+}
+
+function editUser(userId, username, displayName, role) {
+    document.getElementById('userFormCard').style.display = 'block';
+    document.getElementById('userFormTitle').textContent = 'Edit User';
+    document.getElementById('editUserId').value = userId;
+    document.getElementById('userFormUsername').value = username;
+    document.getElementById('userFormPassword').value = '';
+    document.getElementById('userFormPassword').placeholder = '(leave blank to keep)';
+    document.getElementById('userFormDisplayName').value = displayName;
+    document.getElementById('userFormRole').value = role;
+}
+
+function hideUserForm() {
+    document.getElementById('userFormCard').style.display = 'none';
+}
+
+async function saveUser() {
+    const userId = document.getElementById('editUserId').value;
+    const username = document.getElementById('userFormUsername').value.trim();
+    const password = document.getElementById('userFormPassword').value;
+    const displayName = document.getElementById('userFormDisplayName').value.trim();
+    const role = document.getElementById('userFormRole').value;
+
+    if (!username) {
+        showToast('Username is required', 'error');
+        return;
+    }
+
+    try {
+        let res;
+        if (userId) {
+            // Update existing user
+            const body = { username, display_name: displayName || null, role };
+            if (password) body.password = password;
+
+            res = await fetch(`${API_BASE}/users/${userId}`, {
+                method: 'PATCH',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': getAuthHeader()
+                },
+                body: JSON.stringify(body),
+            });
+        } else {
+            // Create new user
+            if (!password) {
+                showToast('Password is required for new users', 'error');
+                return;
+            }
+            res = await fetch(`${API_BASE}/users`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': getAuthHeader()
+                },
+                body: JSON.stringify({ username, password, display_name: displayName || null, role }),
+            });
+        }
+
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({ detail: 'Failed to save user' }));
+            throw new Error(errData.detail);
+        }
+
+        showToast(userId ? 'User updated' : 'User created', 'success');
+        hideUserForm();
+        loadUsers();
+    } catch (err) {
+        showToast(`Error: ${err.message}`, 'error');
+    }
+}
+
+async function deleteUser(userId, username) {
+    if (!confirm(`Delete user "${username}"? This cannot be undone.`)) return;
+
+    try {
+        const res = await fetch(`${API_BASE}/users/${userId}`, {
+            method: 'DELETE',
+            headers: { 'Authorization': getAuthHeader() }
+        });
+
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({ detail: 'Failed to delete user' }));
+            throw new Error(errData.detail);
+        }
+
+        showToast('User deleted', 'success');
+        loadUsers();
+    } catch (err) {
+        showToast(`Error: ${err.message}`, 'error');
+    }
+}

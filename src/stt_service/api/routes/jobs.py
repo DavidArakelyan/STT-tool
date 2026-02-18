@@ -9,9 +9,10 @@ import shutil
 from pathlib import Path
 
 from stt_service.api.dependencies import (
-    APIKey,
     ChunkRepo,
+    CurrentUser,
     JobRepo,
+    ProjectRepo,
     Storage,
 )
 from stt_service.api.schemas.job import MessageResponse
@@ -61,7 +62,7 @@ def get_orchestrator(
 @router.get("", response_model=JobListResponse)
 async def list_jobs(
     job_repo: JobRepo,
-    _api_key: APIKey,
+    _user: CurrentUser,
     status: JobStatus | None = Query(None, description="Filter by status"),
     project_id: str | None = Query(None, description="Filter by project"),
     limit: int = Query(50, ge=1, le=100, description="Maximum results"),
@@ -105,7 +106,7 @@ async def list_jobs(
 async def download_all_bundles(
     job_repo: JobRepo,
     storage: Storage,
-    _api_key: APIKey,
+    _user: CurrentUser,
     project_id: str | None = Query(None, description="Filter by project"),
 ) -> StreamingResponse:
     """Download a ZIP bundle containing all completed jobs.
@@ -190,7 +191,7 @@ async def download_all_bundles(
 async def get_job(
     job_id: str,
     job_repo: JobRepo,
-    _api_key: APIKey,
+    _user: CurrentUser,
 ) -> JobResponse:
     """Get job status and metadata."""
     job = await job_repo.get_by_id(job_id)
@@ -216,7 +217,7 @@ async def get_job(
 @router.get("/{job_id}/progress", response_model=JobProgress)
 async def get_job_progress(
     job_id: str,
-    _api_key: APIKey,
+    _user: CurrentUser,
     orchestrator: JobOrchestrator = Depends(get_orchestrator),
     include_chunks: bool = Query(False, description="Include individual chunk status"),
 ) -> JobProgress:
@@ -253,7 +254,7 @@ async def get_job_logs(
     job_id: str,
     job_repo: JobRepo,
     chunk_repo: ChunkRepo,
-    _api_key: APIKey,
+    _user: CurrentUser,
 ) -> dict:
     """Get detailed job logs and processing history."""
     job = await job_repo.get_by_id(job_id)
@@ -343,7 +344,7 @@ async def get_job_logs(
 async def get_job_result(
     job_id: str,
     job_repo: JobRepo,
-    _api_key: APIKey,
+    _user: CurrentUser,
 ) -> TranscriptionResult:
     """Get transcription result for a completed job."""
     job = await job_repo.get_by_id(job_id)
@@ -412,7 +413,7 @@ async def download_bundle(
     job_id: str,
     job_repo: JobRepo,
     storage: Storage,
-    _api_key: APIKey,
+    _user: CurrentUser,
 ) -> StreamingResponse:
     """Download a ZIP bundle containing the source audio and transcript."""
     from pathlib import Path
@@ -484,7 +485,7 @@ async def download_bundle(
 @router.post("/{job_id}/retry", response_model=MessageResponse)
 async def retry_job(
     job_id: str,
-    _api_key: APIKey,
+    _user: CurrentUser,
     orchestrator: JobOrchestrator = Depends(get_orchestrator),
 ) -> MessageResponse:
     """Retry a failed job from the last successful checkpoint."""
@@ -503,7 +504,7 @@ async def retry_job(
 @router.delete("/{job_id}", response_model=MessageResponse)
 async def delete_job(
     job_id: str,
-    _api_key: APIKey,
+    _user: CurrentUser,
     orchestrator: JobOrchestrator = Depends(get_orchestrator),
 ) -> MessageResponse:
     """Delete a job and all associated files."""
@@ -529,7 +530,7 @@ async def delete_job(
 @router.delete("", response_model=MessageResponse)
 async def delete_all_jobs(
     job_repo: JobRepo,
-    _api_key: APIKey,
+    _user: CurrentUser,
     project_id: str | None = Query(None, description="Scope deletion to a specific project"),
     background_tasks: bool = Query(False, description="Run deletion in background (not implemented yet)"),
     orchestrator: JobOrchestrator = Depends(get_orchestrator),
@@ -564,7 +565,7 @@ async def delete_all_jobs(
 @router.get("/{job_id}/system-logs")
 async def get_system_logs(
     job_id: str,
-    _api_key: APIKey,
+    _user: CurrentUser,
     limit: int = Query(200, ge=1, le=1000, description="Max log lines to return"),
 ) -> dict:
     """Get developer-level system logs for a specific job."""
@@ -605,7 +606,7 @@ async def get_system_logs(
 @router.post("/{job_id}/cancel", response_model=MessageResponse)
 async def cancel_job(
     job_id: str,
-    _api_key: APIKey,
+    _user: CurrentUser,
     orchestrator: JobOrchestrator = Depends(get_orchestrator),
 ) -> MessageResponse:
     """Cancel a running job."""
@@ -623,7 +624,7 @@ async def cancel_job(
 async def get_chunk_log(
     job_id: str,
     chunk_index: int,
-    _api_key: APIKey,
+    _user: CurrentUser,
 ) -> dict:
     """Get the raw JSON log/result for a specific chunk."""
     try:

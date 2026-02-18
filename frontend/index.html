@@ -10,7 +10,31 @@
 </head>
 
 <body>
-    <div class="container">
+    <!-- ============ LOGIN PAGE ============ -->
+    <div class="login-page" id="loginPage">
+        <div class="login-card">
+            <div class="login-header">
+                <h1>🎙️ Speech to Text</h1>
+                <p>Multi-provider transcription service</p>
+            </div>
+            <form onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label for="loginUsername">Username</label>
+                    <input type="text" id="loginUsername" class="form-input" placeholder="Enter username" required
+                        autofocus>
+                </div>
+                <div class="form-group">
+                    <label for="loginPassword">Password</label>
+                    <input type="password" id="loginPassword" class="form-input" placeholder="Enter password" required>
+                </div>
+                <div class="login-error" id="loginError" style="display: none;"></div>
+                <button type="submit" class="btn btn-primary login-btn" id="loginBtn">Sign In</button>
+            </form>
+        </div>
+    </div>
+
+    <!-- ============ MAIN APP (hidden until login) ============ -->
+    <div class="container" id="appContainer" style="display: none;">
         <!-- Shared Header -->
         <header class="header">
             <div class="header-left">
@@ -19,20 +43,13 @@
                 <p class="subtitle">Multi-provider transcription service</p>
             </div>
             <div class="header-right">
-                <div class="session-auth">
-                    <div class="input-with-toggle">
-                        <input type="password" id="apiKey" class="session-key-input" placeholder="Session Key"
-                            title="Enter API Key for this session" onchange="getApiKey()">
-                        <button class="toggle-password" onclick="togglePasswordVisibility('apiKey')"
-                            title="Toggle Visibility">
-                            <svg viewBox="0 0 24 24">
-                                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
-                                <circle cx="12" cy="12" r="3"></circle>
-                            </svg>
-                        </button>
-                    </div>
+                <div class="user-info" id="userInfo">
+                    <span class="user-display-name" id="userDisplayName"></span>
+                    <span class="user-role-badge" id="userRoleBadge"></span>
+                    <button class="btn btn-secondary btn-sm" onclick="handleLogout()">Logout</button>
                 </div>
-                <button class="btn btn-secondary btn-icon" onclick="openSettings()" title="Settings">⚙️</button>
+                <button class="btn btn-secondary btn-icon" id="settingsBtn" onclick="openSettings()" title="Settings"
+                    style="display: none;">⚙️</button>
             </div>
         </header>
 
@@ -234,25 +251,90 @@
             </div>
         </div>
 
-        <!-- Settings Modal (Dynamic) -->
+        <!-- Settings Modal (Dynamic - Admin Only) -->
         <div class="modal" id="settingsModal">
             <div class="modal-content modal-large">
                 <div class="modal-header">
-                    <h2>⚙️ Configuration</h2>
+                    <h2>⚙️ Admin Panel</h2>
                     <button class="btn btn-icon" onclick="closeSettingsModal()">✕</button>
                 </div>
-                <div class="modal-body settings-body">
-                    <div class="settings-sidebar" id="settingsSidebar">
-                        <!-- Sections injected here -->
+                <div class="settings-tabs">
+                    <button class="settings-tab active" id="tabConfig"
+                        onclick="switchAdminTab('config')">Configuration</button>
+                    <button class="settings-tab" id="tabUsers" onclick="switchAdminTab('users')">User
+                        Management</button>
+                </div>
+                <!-- Configuration Tab -->
+                <div class="admin-tab-content" id="adminTabConfig">
+                    <div class="modal-body settings-body">
+                        <div class="settings-sidebar" id="settingsSidebar">
+                            <!-- Sections injected here -->
+                        </div>
+                        <div class="settings-content" id="settingsContent">
+                            <!-- Form fields injected here -->
+                        </div>
                     </div>
-                    <div class="settings-content" id="settingsContent">
-                        <!-- Form fields injected here -->
+                    <div class="modal-footer">
+                        <div class="settings-status" id="settingsStatus"></div>
+                        <button class="btn btn-secondary" onclick="closeSettingsModal()">Cancel</button>
+                        <button class="btn btn-primary" onclick="saveSettings()">Save Changes</button>
                     </div>
                 </div>
-                <div class="modal-footer">
-                    <div class="settings-status" id="settingsStatus"></div>
-                    <button class="btn btn-secondary" onclick="closeSettingsModal()">Cancel</button>
-                    <button class="btn btn-primary" onclick="saveSettings()">Save Changes</button>
+                <!-- User Management Tab -->
+                <div class="admin-tab-content" id="adminTabUsers" style="display: none;">
+                    <div class="modal-body">
+                        <div class="user-mgmt-header">
+                            <h3>Users</h3>
+                            <button class="btn btn-primary btn-sm" onclick="showCreateUserForm()">+ Add User</button>
+                        </div>
+                        <!-- Create/Edit User Form (hidden by default) -->
+                        <div class="user-form-card" id="userFormCard" style="display: none;">
+                            <h4 id="userFormTitle">Create User</h4>
+                            <input type="hidden" id="editUserId">
+                            <div class="user-form-grid">
+                                <div class="form-group">
+                                    <label>Username</label>
+                                    <input type="text" id="userFormUsername" class="form-input" placeholder="username"
+                                        maxlength="100">
+                                </div>
+                                <div class="form-group">
+                                    <label>Password</label>
+                                    <input type="password" id="userFormPassword" class="form-input"
+                                        placeholder="password">
+                                </div>
+                                <div class="form-group">
+                                    <label>Display Name</label>
+                                    <input type="text" id="userFormDisplayName" class="form-input"
+                                        placeholder="Display name" maxlength="200">
+                                </div>
+                                <div class="form-group">
+                                    <label>Role</label>
+                                    <select id="userFormRole" class="form-input">
+                                        <option value="user">User</option>
+                                        <option value="admin">Admin</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="user-form-actions">
+                                <button class="btn btn-secondary btn-sm" onclick="hideUserForm()">Cancel</button>
+                                <button class="btn btn-primary btn-sm" onclick="saveUser()">Save</button>
+                            </div>
+                        </div>
+                        <table class="user-table" id="usersTable">
+                            <thead>
+                                <tr>
+                                    <th>Username</th>
+                                    <th>Display Name</th>
+                                    <th>Role</th>
+                                    <th>Active</th>
+                                    <th>Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody id="usersTableBody">
+                                <!-- Injected by JS -->
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
         </div>
@@ -384,7 +466,7 @@
 
         <!-- Toast Container -->
         <div class="toast-container" id="toastContainer"></div>
-    </div>
+    </div><!-- end appContainer -->
 
     <script src="/static/app.js?v=5"></script>
     <script>

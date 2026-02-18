@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 import os
 from pathlib import Path
 
-from stt_service.api.dependencies import APIKey
+from stt_service.api.dependencies import AdminUser
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
 
@@ -102,7 +102,7 @@ def write_env_file(config: AppConfig):
         f.write("\n".join(lines))
 
 @router.get("", response_model=AppConfig)
-async def get_settings(_api_key: APIKey):
+async def get_settings(_admin: AdminUser):
     """Get current configuration from .env file."""
     try:
         sections = parse_env_file()
@@ -111,7 +111,7 @@ async def get_settings(_api_key: APIKey):
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.post("", response_model=Dict[str, str])
-async def update_settings(config: AppConfig, _api_key: APIKey):
+async def update_settings(config: AppConfig, _admin: AdminUser):
     """Update .env configuration."""
     try:
         write_env_file(config)
