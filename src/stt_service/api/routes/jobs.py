@@ -530,14 +530,15 @@ async def delete_job(
 async def delete_all_jobs(
     job_repo: JobRepo,
     _api_key: APIKey,
+    project_id: str | None = Query(None, description="Scope deletion to a specific project"),
     background_tasks: bool = Query(False, description="Run deletion in background (not implemented yet)"),
     orchestrator: JobOrchestrator = Depends(get_orchestrator),
 ) -> MessageResponse:
-    """Delete ALL jobs and associated files."""
-    # List all jobs (no limit)
+    """Delete jobs and associated files. If project_id is provided, only deletes jobs in that project."""
+    # List jobs scoped to project (or all if no project_id)
     # Note: For very large numbers of jobs, this should be paginated or backgrounded
     # But for a personal tool, iterating 100-200 jobs is fine.
-    jobs = await job_repo.list_jobs(limit=1000)
+    jobs = await job_repo.list_jobs(project_id=project_id, limit=1000)
     
     deleted_count = 0
     errors = []

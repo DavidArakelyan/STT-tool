@@ -294,6 +294,74 @@ async function fetchProjectCost(projectId) {
     }
 }
 
+// ===== Project Name Editing =====
+function startEditProjectName() {
+    const nameSpan = document.getElementById('projectViewName');
+    const editBtn = document.getElementById('projectEditBtn');
+    const editDiv = document.getElementById('projectNameEdit');
+    const input = document.getElementById('projectNameInput');
+
+    input.value = currentProjectName || '';
+    nameSpan.style.display = 'none';
+    editBtn.style.display = 'none';
+    editDiv.style.display = 'flex';
+    input.focus();
+    input.select();
+}
+
+function cancelEditProjectName() {
+    document.getElementById('projectViewName').style.display = '';
+    document.getElementById('projectEditBtn').style.display = '';
+    document.getElementById('projectNameEdit').style.display = 'none';
+}
+
+function handleProjectNameKey(event) {
+    if (event.key === 'Enter') {
+        event.preventDefault();
+        saveProjectName();
+    } else if (event.key === 'Escape') {
+        cancelEditProjectName();
+    }
+}
+
+async function saveProjectName() {
+    const input = document.getElementById('projectNameInput');
+    const newName = input.value.trim();
+
+    if (!newName) {
+        showToast('Project name cannot be empty', 'error');
+        return;
+    }
+
+    if (newName === currentProjectName) {
+        cancelEditProjectName();
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/projects/${currentProjectId}`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': getApiKey()
+            },
+            body: JSON.stringify({ name: newName })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to rename project');
+        }
+
+        currentProjectName = newName;
+        document.getElementById('projectViewName').textContent = newName;
+        cancelEditProjectName();
+        showToast('Project renamed', 'success');
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
+}
+
 // ===== Project CRUD =====
 async function loadProjects() {
     const grid = document.getElementById('projectsGrid');
@@ -352,7 +420,10 @@ function renderProjects(projects) {
             <div class="project-card" onclick="navigateToProject('${p.project_id}', '${p.name.replace(/'/g, "\\'")}')">
                 <div class="project-card-header">
                     <h3 class="project-card-name">${p.name}</h3>
-                    <button class="btn btn-icon btn-sm project-delete-btn" onclick="event.stopPropagation(); showDeleteProjectConfirm('${p.project_id}', '${p.name.replace(/'/g, "\\'")}')" title="Delete project">🗑️</button>
+                    <div class="project-card-actions">
+                        <button class="btn btn-icon btn-sm project-action-btn" onclick="event.stopPropagation(); showRenameProjectModal('${p.project_id}', '${p.name.replace(/'/g, "\\'")}')" title="Rename project">✏️</button>
+                        <button class="btn btn-icon btn-sm project-action-btn" onclick="event.stopPropagation(); showDeleteProjectConfirm('${p.project_id}', '${p.name.replace(/'/g, "\\'")}')" title="Delete project">🗑️</button>
+                    </div>
                 </div>
                 ${desc ? `<p class="project-card-desc">${desc}</p>` : ''}
                 <div class="project-card-meta">
@@ -464,11 +535,61 @@ async function confirmDeleteProject() {
     }
 }
 
+// ===== Rename Project =====
+let pendingRenameProjectId = null;
+
+function showRenameProjectModal(projectId, projectName) {
+    pendingRenameProjectId = projectId;
+    document.getElementById('renameProjectInput').value = projectName;
+    document.getElementById('renameProjectModal').classList.add('open');
+    document.getElementById('renameProjectInput').focus();
+    document.getElementById('renameProjectInput').select();
+}
+
+function closeRenameProjectModal() {
+    document.getElementById('renameProjectModal').classList.remove('open');
+    pendingRenameProjectId = null;
+}
+
+async function confirmRenameProject() {
+    if (!pendingRenameProjectId) return;
+
+    const newName = document.getElementById('renameProjectInput').value.trim();
+    if (!newName) {
+        showToast('Project name cannot be empty', 'error');
+        return;
+    }
+
+    try {
+        const response = await fetch(`${API_BASE}/projects/${pendingRenameProjectId}`, {
+            method: 'PATCH',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-API-Key': getApiKey()
+            },
+            body: JSON.stringify({ name: newName })
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.detail || 'Failed to rename project');
+        }
+
+        showToast('Project renamed', 'success');
+        closeRenameProjectModal();
+        loadProjects();
+    } catch (error) {
+        showToast(error.message, 'error');
+    }
+}
+
 // ===== File Upload (Bulk) =====
 const MAX_CONCURRENT_JOBS = 3;
 let selectedFiles = [];      // Files shown in the queue UI (not yet submitted)
 let pendingFiles = [];       // Files waiting to be uploaded (after Start clicked)
 let activeJobSlots = new Set(); // Job IDs currently consuming a concurrency slot
+let completedJobCount = 0;       // Count of completed jobs (updated by refreshJobs)
+let totalJobCount = 0;           // Total job count (updated by refreshJobs)
 
 function initDropzone() {
     const dropzone = document.getElementById('dropzone');
@@ -667,17 +788,37 @@ async function submitSingleFile(file) {
 function updateQueueStatusBar() {
     const bar = document.getElementById('queueStatusBar');
     const text = document.getElementById('queueStatusText');
+    const spinner = document.getElementById('queueStatusSpinner');
 
-    if (activeJobSlots.size === 0 && pendingFiles.length === 0) {
+    const isProcessing = activeJobSlots.size > 0 || pendingFiles.length > 0;
+
+    if (!isProcessing && totalJobCount === 0) {
         bar.style.display = 'none';
         return;
     }
 
     bar.style.display = 'flex';
+
+    // Show/hide spinner based on whether work is actively happening
+    if (spinner) {
+        spinner.style.display = isProcessing ? 'inline-block' : 'none';
+    }
+
     const parts = [];
     if (activeJobSlots.size > 0) parts.push(`${activeJobSlots.size} active`);
     if (pendingFiles.length > 0) parts.push(`${pendingFiles.length} queued`);
-    text.textContent = `Processing: ${parts.join(' · ')}`;
+
+    // Progress: completed / total with percentage
+    if (totalJobCount > 0) {
+        const pct = Math.round((completedJobCount / totalJobCount) * 100);
+        parts.push(`${completedJobCount}/${totalJobCount} completed (${pct}%)`);
+    }
+
+    if (isProcessing) {
+        text.textContent = `Processing: ${parts.join(' · ')}`;
+    } else {
+        text.textContent = parts.join(' · ');
+    }
 }
 
 // ===== Jobs Management =====
@@ -695,6 +836,9 @@ async function refreshJobs() {
 
         const data = await response.json();
         renderJobsList(data.jobs);
+        totalJobCount = data.jobs.length + pendingFiles.length;
+        completedJobCount = data.jobs.filter(j => j.status === 'completed').length;
+        updateQueueStatusBar();
 
         // Start polling for active jobs
         data.jobs.forEach(job => {
@@ -1276,7 +1420,11 @@ function closeDeleteAllModal() {
 async function confirmDeleteAll() {
     closeDeleteAllModal();
     try {
-        const response = await fetch(`${API_BASE}/jobs`, {
+        let url = `${API_BASE}/jobs`;
+        if (currentProjectId) {
+            url += `?project_id=${currentProjectId}`;
+        }
+        const response = await fetch(url, {
             method: 'DELETE',
             headers: { 'X-API-Key': getApiKey() }
         });

@@ -14,7 +14,8 @@
         <!-- Shared Header -->
         <header class="header">
             <div class="header-left">
-                <h1 class="header-title" onclick="navigateToDashboard()" style="cursor: pointer;">🎙️ Speech to Text</h1>
+                <h1 class="header-title" onclick="navigateToDashboard()" style="cursor: pointer;">🎙️ Speech to Text
+                </h1>
                 <p class="subtitle">Multi-provider transcription service</p>
             </div>
             <div class="header-right">
@@ -56,7 +57,17 @@
             <!-- Project Navigation Bar -->
             <div class="project-nav-bar">
                 <button class="btn btn-secondary btn-sm" onclick="navigateToDashboard()">← Back to Projects</button>
-                <span class="project-nav-name" id="projectViewName"></span>
+                <div class="project-nav-name-group">
+                    <span class="project-nav-name" id="projectViewName"></span>
+                    <button class="btn btn-icon btn-sm project-edit-btn" id="projectEditBtn"
+                        onclick="startEditProjectName()" title="Rename project">✏️</button>
+                    <div class="project-name-edit" id="projectNameEdit" style="display: none;">
+                        <input type="text" id="projectNameInput" class="form-input project-name-input" maxlength="200"
+                            onkeydown="handleProjectNameKey(event)">
+                        <button class="btn btn-primary btn-sm" onclick="saveProjectName()">Save</button>
+                        <button class="btn btn-secondary btn-sm" onclick="cancelEditProjectName()">Cancel</button>
+                    </div>
+                </div>
                 <span class="project-nav-cost" id="projectViewCost"></span>
             </div>
 
@@ -123,7 +134,7 @@
 
             <!-- Queue Status Bar (shown during bulk processing) -->
             <div class="queue-status-bar" id="queueStatusBar" style="display: none;">
-                <span class="queue-status-spinner"></span>
+                <span class="queue-status-spinner" id="queueStatusSpinner"></span>
                 <span id="queueStatusText">Processing files...</span>
             </div>
 
@@ -132,7 +143,8 @@
                 <div class="section-header">
                     <h2>Transcription Jobs</h2>
                     <div class="header-actions">
-                        <button class="btn btn-primary" onclick="downloadAllBundles()" id="downloadAllBtn">⬇️ Download All</button>
+                        <button class="btn btn-primary" onclick="downloadAllBundles()" id="downloadAllBtn">⬇️ Download
+                            All</button>
                         <button class="btn btn-danger" onclick="showDeleteAllConfirm()">🗑️ Delete All</button>
                         <button class="btn btn-secondary" onclick="refreshJobs()">🔄 Refresh</button>
                     </div>
@@ -159,7 +171,8 @@
                 <div class="modal-body">
                     <div class="form-group">
                         <label for="projectName">Project Name *</label>
-                        <input type="text" id="projectName" class="form-input" placeholder="e.g., Q1 Meeting Transcriptions" maxlength="200" autofocus>
+                        <input type="text" id="projectName" class="form-input"
+                            placeholder="e.g., Q1 Meeting Transcriptions" maxlength="200" autofocus>
                     </div>
                     <div class="form-group">
                         <label for="projectDescription">Description (Optional)</label>
@@ -169,7 +182,8 @@
                 </div>
                 <div class="modal-footer">
                     <button class="btn btn-secondary" onclick="closeCreateProjectModal()">Cancel</button>
-                    <button class="btn btn-primary" id="createProjectBtn" onclick="createProject()">Create Project</button>
+                    <button class="btn btn-primary" id="createProjectBtn" onclick="createProject()">Create
+                        Project</button>
                 </div>
             </div>
         </div>
@@ -194,6 +208,28 @@
                 <div class="modal-footer">
                     <button class="btn btn-secondary" onclick="closeDeleteProjectModal()">Cancel</button>
                     <button class="btn btn-danger" onclick="confirmDeleteProject()">🗑️ Delete Project</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Rename Project Modal -->
+        <div class="modal" id="renameProjectModal">
+            <div class="modal-content modal-small">
+                <div class="modal-header">
+                    <h2>✏️ Rename Project</h2>
+                    <button class="btn btn-icon" onclick="closeRenameProjectModal()">✕</button>
+                </div>
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="renameProjectInput">Project Name</label>
+                        <input type="text" id="renameProjectInput" class="form-input" placeholder="New project name"
+                            maxlength="200"
+                            onkeydown="if(event.key==='Enter'){event.preventDefault();confirmRenameProject();}">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button class="btn btn-secondary" onclick="closeRenameProjectModal()">Cancel</button>
+                    <button class="btn btn-primary" onclick="confirmRenameProject()">Save</button>
                 </div>
             </div>
         </div>
@@ -361,6 +397,9 @@
         });
         document.getElementById('deleteProjectModal').addEventListener('click', (e) => {
             if (e.target.id === 'deleteProjectModal') closeDeleteProjectModal();
+        });
+        document.getElementById('renameProjectModal').addEventListener('click', (e) => {
+            if (e.target.id === 'renameProjectModal') closeRenameProjectModal();
         });
     </script>
 </body>
